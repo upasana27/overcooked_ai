@@ -24,15 +24,16 @@ class Subtasks:
 
 
 class OvercookedDataset(Dataset):
-    def __init__(self, env, encoding_fn, args, add_subtask_info=True):
+    def __init__(self, env, encoding_fn, layouts, args, add_subtask_info=True):
         self.env = env
         self.add_subtask_info = add_subtask_info
         self.encode_state_fn = encoding_fn
         self.data_path = args.base_dir / args.data_path / args.dataset
         self.main_trials = pd.read_pickle(self.data_path)
         print(f'Number of all trials: {len(self.main_trials)}')
-        self.main_trials = self.main_trials[self.main_trials['layout_name'] == args.layout]
-        print(f'Number of {args.layout} trials: {len(self.main_trials)}')
+        self.layouts = layouts
+        self.main_trials = self.main_trials[self.main_trials['layout_name'].isin(layouts)]
+        print(f'Number of {str(layouts)} trials: {len(self.main_trials)}')
         # print(self.main_trials['layout_name'])
 
         self.action_ratios = {k: 0 for k in Action.ALL_ACTIONS}
