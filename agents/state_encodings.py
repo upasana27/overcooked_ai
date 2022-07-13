@@ -4,8 +4,9 @@ from overcooked_ai_py.planning.planners import MediumLevelActionManager, NO_COUN
 from copy import deepcopy
 import numpy as np
 
-def encode_state(mdp: OvercookedGridworld, state: OvercookedState, horizon: int, inc_agent_obs: bool=True,
-                 inc_soup_time: bool=True, inc_urgency=True):
+
+def encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: tuple, horizon: int,
+                 inc_agent_obs: bool=True, inc_soup_time: bool=True, inc_urgency=True):
     """
     CNN Approach. Differs from OAI's lossless state by using 4 (opt. 5) layers instead of 20 and IDs instead of binary masks.
     Optionally adds robot observations (6 1-byte features) that includes additional information in a regular vector form.
@@ -47,8 +48,7 @@ def encode_state(mdp: OvercookedGridworld, state: OvercookedState, horizon: int,
     STATUS_TO_IDX = {agent: idx for idx, agent in enumerate(STATUS)}
 
     num_channels = 5 if inc_soup_time else 4
-    # TODO Consider making a max gridworld size and filling with 0s (counters) to enable transfer to new layouts
-    visual_obs = np.zeros( (num_channels, *mdp.shape) )
+    visual_obs = np.zeros( (num_channels, *grid_shape) )
     if inc_agent_obs:
         agent_obs = np.zeros( (2, 7 if inc_urgency else 6) )
     else:
@@ -123,7 +123,7 @@ def encode_state(mdp: OvercookedGridworld, state: OvercookedState, horizon: int,
     visual_obs = np.tile(visual_obs, (2,1,1,1))
     return visual_obs, agent_obs
 
-def OAI_BC_featurize_state(mdp: OvercookedGridworld, state: OvercookedState, horizon: int, num_pots: int = 2):
+def OAI_BC_featurize_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: tuple, horizon: int, num_pots: int = 2):
     """
     Uses Overcooked-ai's BC 64 dim BC featurization. Only returns agent_obs
     """
@@ -132,7 +132,7 @@ def OAI_BC_featurize_state(mdp: OvercookedGridworld, state: OvercookedState, hor
     agent_obs = np.stack(agent_obs, axis=0)
     return np.array([[],[]]), agent_obs
 
-def OAI_RL_encode_state(mdp: OvercookedGridworld, state: OvercookedState, horizon: int):
+def OAI_RL_encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: tuple, horizon: int):
     """
     Uses Overcooked-ai's RL lossless encoding by stacking 20 binary masks (20xNxM). Only returns visual_obss
     """
@@ -140,6 +140,11 @@ def OAI_RL_encode_state(mdp: OvercookedGridworld, state: OvercookedState, horizo
     visual_obs = np.stack(visual_obs, axis=0)
     # Reorder to channels first
     visual_obs = np.transpose(visual_obs, (0, 3, 1, 2))
+    grid_shape = (2, visual_obs.shape[1], *grid_shape)
+    assert len(visual_obs.shape) == len(grid_shape)
+    assert all([visual_obs.shape[i] <= grid_shape[i] for i in range(len(visual_obs.shape))])
+    padding_amount = [(0, grid_shape[i] - visual_obs.shape[i]) for i in range(len(grid_shape))]
+    visual_obs = np.pad(visual_obs, padding_amount)
     return visual_obs, np.array([[], []])
 
 ENCODING_SCHEMES = {
@@ -154,9 +159,10 @@ if __name__ == '__main__':
     from overcooked_ai_py.mdp.overcooked_mdp import OvercookedState, OvercookedGridworld, Direction, Action
     env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name('asymmetric_advantages'), horizon=400)
     env.reset()
+    grid_shape = (15, 15)
     for name, encoding_fn in ENCODING_SCHEMES.items():
-        vis_obs, agents_obs = encoding_fn(env.mdp, env.state, 400)
-        time_taken = timeit.timeit(lambda: encoding_fn(env.mdp, env.state, 400), number=10)
+        vis_obs, agents_obs = encoding_fn(env.mdp, env.state, grid_shape, 400)
+        time_taken = timeit.timeit(lambda: encoding_fn(env.mdp, env.state, grid_shape, 400), number=10)
         print(f'{name} function returns tuple with shapes({vis_obs.shape}, {agents_obs.shape}) and takes {time_taken} to complete')
         # print(vis_obs.shape, agents_obs.shape)
 

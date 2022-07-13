@@ -1,5 +1,4 @@
 from arguments import get_arguments
-from nets import GridEncoder, get_output_shape, weights_init
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedState, OvercookedGridworld, Direction, Action
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
