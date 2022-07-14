@@ -22,40 +22,7 @@ import wandb
 NUM_ACTIONS = 6 # UP, DOWN, LEFT, RIGHT, INTERACT, NOOP
 
 
-def get_output_shape(model, image_dim):
-    return model(th.rand(*(image_dim))).data.shape[1:]
-
-def weights_init_(m):
-    if hasattr(m, 'weight') and m.weight is not None and len(m.weight.shape) > 2:
-        th.nn.init.xavier_uniform_(m.weight, gain=1)
-    if hasattr(m, 'bias') and m.bias is not None and isinstance(m.bias, th.Tensor):
-        th.nn.init.constant_(m.bias, 0)
-
-
-class GridEncoder(nn.Module):
-    def __init__(self, grid_shape, depth=16, act=nn.ReLU):
-        super(GridEncoder, self).__init__()
-        self.kernels = (4, 4, 4, 4) if max(grid_shape) > 64 else (3, 3, 3, 3)
-        self.strides = (2, 2, 2, 2) if max(grid_shape) > 64 else (1, 1, 1, 1)
-        self.padding = (1, 1)
-        layers = []
-        current_channels = grid_shape[0]
-        for i, (k, s) in enumerate(zip(self.kernels, self.strides)):
-            layers.append(nn.Conv2d(current_channels, depth, k, stride=s, padding=self.padding))
-            layers.append(nn.GroupNorm(1, depth))
-            layers.append(act())
-            current_channels = depth
-            depth *= 2
-
-        layers.append(nn.Flatten())
-        self.encoder = nn.Sequential(*layers)
-        self.apply(weights_init_)
-
-    def forward(self, obs):
-        return self.encoder(obs)
-
-
-class BehaviouralCloning(nn.Module):
+class SubtaskPredictor(nn.Module):
     def __init__(self, device, visual_obs_shape, agent_obs_shape, pred_subtasks, cond_subtasks,  act=nn.ReLU, hidden_dim=256):
         """
         NN network for a behavioral cloning agent
@@ -65,7 +32,7 @@ class BehaviouralCloning(nn.Module):
         :param act: activation function
         :param hidden_dim: hidden dimension to use in NNs
         """
-        super(BehaviouralCloning, self).__init__()
+        super(SubtaskPredictor, self).__init__()
         self.device = device
         self.act = act
         self.hidden_dim = hidden_dim
@@ -79,6 +46,7 @@ class BehaviouralCloning(nn.Module):
         if self.use_visual_obs:
             self.cnn = GridEncoder(visual_obs_shape)
             self.cnn_output_shape = get_output_shape(self.cnn, [1, *visual_obs_shape])[0]
+            self.pre_flatten_shape = get_output_shape(self.cnn[:-1], [1, *visual_obs_shape])
         else:
             self.cnn_output_shape = 0
 
@@ -89,9 +57,8 @@ class BehaviouralCloning(nn.Module):
             nn.Linear(self.hidden_dim, self.hidden_dim),
             act(),
         )
-        self.action_predictor = nn.Linear(self.hidden_dim, NUM_ACTIONS)
-        if self.pred_subtasks:
-            self.subtask_predictor = nn.Linear(self.hidden_dim, Subtasks.NUM_SUBTASKS)
+
+        self.subtask_predictor = nn.Linear(self.hidden_dim, Subtasks.NUM_SUBTASKS)
         self.apply(weights_init_)
         self.to(self.device)
 
@@ -107,19 +74,15 @@ class BehaviouralCloning(nn.Module):
         if self.cond_subtasks:
             latent_state.append(subtask) #F.one_hot(subtask, num_classes=Subtasks.NUM_SUBTASKS))
         latent_feats = self.mlp(th.cat(latent_state, dim=-1))
-        action_logits = self.action_predictor(latent_feats)
-        return (action_logits, self.subtask_predictor(latent_feats)) if self.pred_subtasks else action_logits
+        return self.subtask_predictor(latent_feats)
 
-    def select_action(self, obs, sample=True):
+    def select_subtask(self, obs, sample=True):
         """Select action. If sample is True, sample action from distribution, else pick best scoring action"""
         logits = self.forward([th.tensor(o, device=self.device).unsqueeze(dim=0) for o in obs])
-        if self.pred_subtasks:
-            return (Categorical(logits=logits[0]).sample() if sample else th.argmax(logits[0], dim=-1)), logits[1]
-        else:
-            return Categorical(logits=logits).sample() if sample else th.argmax(logits, dim=-1)
+        return Categorical(logits=logits).sample() if sample else th.argmax(logits, dim=-1)
 
-class BC_trainer():
-    def __init__(self, encoding_fn, train_layouts, test_layout, args, vis_eval=False, pred_subtasks=True, cond_subtasks=True):
+class subtask_trainer():
+    def __init__(self, env, encoding_fn, dataset, args, vis_eval=False, pred_subtasks=True, cond_subtasks=True):
         """
         Class to train BC agent
         :param env: Overcooked environment to use
@@ -133,35 +96,31 @@ class BC_trainer():
         """
         self.device = th.device('cuda' if th.cuda.is_available() else 'cpu')
         self.num_players = 2
+        self.env = env
         self.encode_state_fn = encoding_fn
+        self.dataset = dataset
         self.args = args
         self.visualize_evaluation = vis_eval
         self.pred_subtasks = pred_subtasks
         assert not (cond_subtasks and not pred_subtasks), "Can only condition on subtasks if also predicting subtasks"
         self.cond_subtasks = cond_subtasks
-        self.train_layouts = train_layouts
-        self.test_layout = test_layout
-        self.test_env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(self.test_layout), horizon=args.horizon)
-        self.train_dataset = OvercookedDataset(encoding_fn, self.train_layouts, args)
-        self.grid_shape = self.train_dataset.grid_shape
-        visual_obs, agent_obss = self.encode_state_fn(self.test_env.mdp, self.test_env.state,
-                                                      self.grid_shape, self.args.horizon)
+        visual_obs, agent_obss = self.encode_state_fn(self.env.mdp, self.env.state, self.args.horizon)
         visual_obs_shape = visual_obs[0].shape
         agent_obs_shape = agent_obss[0].shape
         self.players = (
-            BehaviouralCloning(self.device, visual_obs_shape, agent_obs_shape, pred_subtasks, cond_subtasks),
+            Subtask(self.device, visual_obs_shape, agent_obs_shape, pred_subtasks, cond_subtasks),
             BehaviouralCloning(self.device, visual_obs_shape, agent_obs_shape, pred_subtasks, cond_subtasks)
         )
 
-        if len(train_layouts) > 0:
+        if dataset is not None:
             self.optimizers = tuple([th.optim.Adam(player.parameters(), lr=args.lr) for player in self.players])
-            self.action_criterion = nn.CrossEntropyLoss(weight=th.tensor(self.train_dataset.get_action_weights(), dtype=th.float32, device=self.device))
+            self.action_criterion = nn.CrossEntropyLoss(weight=th.tensor(dataset.get_action_weights(), dtype=th.float32, device=self.device))
             if self.pred_subtasks:
-                self.subtask_criterion = nn.CrossEntropyLoss(weight=th.tensor(self.train_dataset.get_subtask_weights(), dtype=th.float32, device=self.device),
+                self.subtask_criterion = nn.CrossEntropyLoss(weight=th.tensor(dataset.get_subtask_weights(), dtype=th.float32, device=self.device),
                                                              reduction='none')
         if self.visualize_evaluation:
             pygame.init()
-            surface = StateVisualizer().render_state(self.test_env.state, grid=self.test_env.mdp.terrain_mtx)
+            surface = StateVisualizer().render_state(self.env.state, grid=self.env.mdp.terrain_mtx)
             self.window = pygame.display.set_mode(surface.get_size(), HWSURFACE | DOUBLEBUF | RESIZABLE)
             self.window.blit(surface, (0, 0))
             pygame.display.flip()
@@ -180,8 +139,8 @@ class BC_trainer():
         average_reward = []
         shaped_reward = []
         for trial in range(num_trials):
-            self.test_env.reset()
-            prev_state, prev_actions = deepcopy(self.test_env.state), (Action.STAY, Action.STAY)
+            self.env.reset()
+            prev_state, prev_actions = deepcopy(self.env.state), (Action.STAY, Action.STAY)
 
             unknown_task_id = th.tensor(Subtasks.SUBTASKS_TO_IDS['unknown']).to(self.device)
             # Predicted subtask to perform next, stars as unknown
@@ -195,7 +154,7 @@ class BC_trainer():
                     self.render()
                     time.sleep(0.1)
                 # Encode Overcooked state into observations for agents
-                obs = self.encode_state_fn(self.test_env.mdp, self.test_env.state, self.grid_shape, self.args.horizon)
+                obs = self.encode_state_fn(self.env.mdp, self.env.state, self.args.horizon)
                 vis_obs, agent_obs = (th.tensor(o, device=self.device, dtype=th.float32) for o in obs)
 
                 # Get next actions
@@ -206,24 +165,19 @@ class BC_trainer():
                     if self.pred_subtasks:
                         action = Action.INDEX_TO_ACTION[preds[0]]
                         # Update predicted subtask
-                        if action == Action.INTERACT:
-                            # pred_subtask[i] = th.softmax(preds[1].detach().squeeze(), dim=-1)
-                            ps = th.zeros_like(preds[1].squeeze())
-                            ps[th.argmax(preds[1].detach().squeeze(), dim=-1)] = 1
-                            pred_subtask[i] = ps.float()
-                            # print(ps.shape, th.softmax(preds[1].detach().squeeze(), dim=-1).shape)
+                        pred_subtask[i] = th.softmax(preds[1].detach().squeeze(), dim=-1)
                     else:
                         action = Action.INDEX_TO_ACTION[preds]
                     # If the state didn't change from the previous timestep and the agent is choosing the same action
                     # then play a random action instead. Prevents agents from getting stuck
-                    if self.test_env.state.time_independent_equal(prev_state) and action == prev_actions[i]:
+                    if self.env.state.time_independent_equal(prev_state) and action == prev_actions[i]:
                         action = np.random.choice(Action.ALL_ACTIONS)
                     joint_action.append(action)
                 joint_action = tuple(joint_action)
 
-                prev_state, prev_actions = deepcopy(self.test_env.state), joint_action
+                prev_state, prev_actions = deepcopy(self.env.state), joint_action
                 # Environment step
-                next_state, reward, done, info = self.test_env.step(joint_action)
+                next_state, reward, done, info = self.env.step(joint_action)
                 # Update metrics
                 trial_reward += reward
                 trial_shaped_r += np.sum(info['shaped_r_by_agent'])
@@ -237,7 +191,7 @@ class BC_trainer():
 
     def render(self):
         """ Render game env """
-        surface = StateVisualizer().render_state(self.test_env.state, grid=self.test_env.mdp.terrain_mtx)
+        surface = StateVisualizer().render_state(self.env.state, grid=self.env.mdp.terrain_mtx)
         self.window = pygame.display.set_mode(surface.get_size(), HWSURFACE | DOUBLEBUF | RESIZABLE)
         self.window.blit(surface, (0, 0))
         pygame.display.flip()
@@ -259,15 +213,13 @@ class BC_trainer():
                 # Train on subtask prediction task
                 pred_action, pred_subtask = preds
                 subtask_loss = self.subtask_criterion(pred_subtask, next_subtask[:, i])
-                subtask_mask = action[:,i] == Action.ACTION_TO_INDEX[Action.INTERACT]
-                loss_mask = th.logical_or(subtask_mask, th.rand_like(subtask_loss, device=self.device) > 0.95)
+                loss_mask = th.logical_or(action[:,i] == Action.ACTION_TO_INDEX[Action.INTERACT],
+                                          th.rand_like(subtask_loss, device=self.device) > 0.9)
                 subtask_loss = th.mean(subtask_loss * loss_mask)
                 tot_loss += th.mean(subtask_loss)
                 metrics[f'p{i}_subtask_loss'] = subtask_loss.item()
-                pred_subtask_indices = th.argmax(pred_subtask, dim=-1)
-                accuracy = ((pred_subtask_indices == next_subtask[:, i]).float() * subtask_mask).sum() / \
-                           subtask_mask.float().sum()
-                metrics[f'p{i}_subtask_acc'] = accuracy.item()
+                pred_subtask_indices = th.argmax(th.round(th.sigmoid(pred_subtask)), dim=-1)
+                metrics[f'p{i}_subtask_acc'] = th.mean((pred_subtask_indices == next_subtask[:, i]).float()).item()
             else:
                 pred_action = preds
             # Train on action prediction task
@@ -285,7 +237,7 @@ class BC_trainer():
             self.players[i].train()
 
         count = 0
-        dataloader = DataLoader(self.train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+        dataloader = DataLoader(self.dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
         for batch in tqdm(dataloader):
             new_losses = self.train_on_batch(batch)
             metrics = {k: [new_losses[k]] + metrics.get(k, []) for k in new_losses}
@@ -328,11 +280,13 @@ class BC_trainer():
 if __name__ == '__main__':
     args = get_arguments()
     encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
+    env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(args.layout), horizon=args.horizon)
+    dataset = OvercookedDataset(env, encoding_fn, args)
     eval_only = False
     if eval_only:
-        bct = BC_trainer(encoding_fn, 'all', 'asymmetric_advantages', args, vis_eval=True)
+        bct = BC_trainer(env, encoding_fn, dataset, args, vis_eval=True)
         bct.load()
         bct.evaluate(10)
     else:
-        bct = BC_trainer(encoding_fn, ['asymmetric_advantages'], 'asymmetric_advantages', args, vis_eval=False)
+        bct = BC_trainer(env, encoding_fn, dataset, args, vis_eval=False)
         bct.training()

@@ -24,15 +24,29 @@ class Subtasks:
 
 
 class OvercookedDataset(Dataset):
-    def __init__(self, env, encoding_fn, args, add_subtask_info=True):
-        self.env = env
+    def __init__(self, encoding_fn, layouts, args, add_subtask_info=True):
         self.add_subtask_info = add_subtask_info
         self.encode_state_fn = encoding_fn
         self.data_path = args.base_dir / args.data_path / args.dataset
         self.main_trials = pd.read_pickle(self.data_path)
+        if args.dataset == '2019_hh_trials_all.pickle':
+            self.main_trials.loc[self.main_trials.layout_name == 'random0', 'layout_name'] = 'forced_coordination'
+            self.main_trials.loc[self.main_trials.layout_name == 'random3', 'layout_name'] = 'counter_circuit'
         print(f'Number of all trials: {len(self.main_trials)}')
-        self.main_trials = self.main_trials[self.main_trials['layout_name'] == args.layout]
-        print(f'Number of {args.layout} trials: {len(self.main_trials)}')
+        self.layouts = layouts
+        if layouts != 'all':
+            self.main_trials = self.main_trials[self.main_trials['layout_name'].isin(layouts)]
+
+        self.layout_to_env = {}
+        self.grid_shape = [0, 0]
+        print(self.main_trials.layout_name.unique())
+        for layout in self.main_trials.layout_name.unique():
+            env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(layout), horizon=args.horizon)
+            self.layout_to_env[layout] = env
+            self.grid_shape[0] = max(env.mdp.shape[0], self.grid_shape[0])
+            self.grid_shape[1] = max(env.mdp.shape[1], self.grid_shape[1])
+
+        print(f'Number of {str(layouts)} trials: {len(self.main_trials)}, max grid size: {self.grid_shape}')
         # print(self.main_trials['layout_name'])
 
         self.action_ratios = {k: 0 for k in Action.ALL_ACTIONS}
@@ -65,7 +79,8 @@ class OvercookedDataset(Dataset):
             if type(state) is str:
                 state = json.loads(state)
             state = OvercookedState.from_dict(state)
-            visual_obs, agent_obs = self.encode_state_fn(env.mdp, state, args.horizon)
+            env = self.layout_to_env[df['layout_name']]
+            visual_obs, agent_obs = self.encode_state_fn(env.mdp, state, self.grid_shape, args.horizon)
             df['state'] = state
             df['visual_obs'] = visual_obs
             df['agent_obs'] = agent_obs
@@ -112,6 +127,7 @@ class OvercookedDataset(Dataset):
         curr_trial = None
         curr_objs = None
         subtask_start_idx = [0, 0]
+        trial_start_idx = [0, 0]
         interact_id = Action.ACTION_TO_INDEX[Action.INTERACT]
 
         def facing(layout, player):
@@ -130,9 +146,15 @@ class OvercookedDataset(Dataset):
                 # if row['cur_gameloop'] != 0:
                 #     print(row)
                 # assert row['cur_gameloop'] == 0 # Ensure we are starting trial from the first timestep
+                subtask = 'unknown'
+                for i in range(len(row['state'].players)):
+                    self.main_trials.loc[subtask_start_idx[i]:index-1, f'p{i + 1}_curr_subtask'] = Subtasks.SUBTASKS_TO_IDS[subtask]
+                    self.main_trials.loc[max(subtask_start_idx[i] - 1, trial_start_idx[i]):index-1, f'p{i + 1}_next_subtask'] = Subtasks.SUBTASKS_TO_IDS[subtask]
+
                 curr_trial = row['trial_id']
                 curr_objs = [(p.held_object.name if p.held_object else None) for p in row['state'].players]
                 subtask_start_idx = [index, index]
+                trial_start_idx = [index, index]
 
             # For each player
             for i in range(len(row['state'].players)):
@@ -143,6 +165,7 @@ class OvercookedDataset(Dataset):
                     subtask = 'unknown'
                     self.main_trials.loc[subtask_start_idx[i]:index, f'p{i + 1}_curr_subtask'] = Subtasks.SUBTASKS_TO_IDS[subtask]
                     self.main_trials.loc[subtask_start_idx[i]-1:index, f'p{i + 1}_next_subtask'] = Subtasks.SUBTASKS_TO_IDS[subtask]
+                    subtask_start_idx[i] = index + 1
                     continue
 
                 # All subtasks will start and end with an INTERACT action
@@ -230,11 +253,11 @@ class OvercookedDataset(Dataset):
 
                     self.main_trials.loc[subtask_start_idx[i]:index, f'p{i + 1}_curr_subtask'] = \
                         Subtasks.SUBTASKS_TO_IDS[subtask]
-                    self.main_trials.loc[max(0, subtask_start_idx[i]-1):max(0, index-1), f'p{i + 1}_next_subtask'] = \
+                    self.main_trials.loc[max(trial_start_idx[i], subtask_start_idx[i]-1):index-1, f'p{i + 1}_next_subtask'] = \
                         Subtasks.SUBTASKS_TO_IDS[subtask]
                     subtask_start_idx[i] = index + 1
 
-        # print()
+        # print(self.main_trials[self.main_trials['p1_curr_subtask'] is None])
         assert not (self.main_trials['p1_curr_subtask'].isna().any())
         assert not (self.main_trials['p2_curr_subtask'].isna().any())
         assert not (self.main_trials['p1_next_subtask'].isna().any())
