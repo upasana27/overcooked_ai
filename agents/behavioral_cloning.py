@@ -141,14 +141,13 @@ class BC_trainer():
         self.cond_subtasks = cond_subtasks
         self.train_layouts = train_layouts
         self.test_layout = test_layout
+        self.test_env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(self.test_layout), horizon=args.horizon)
         self.train_dataset = OvercookedDataset(encoding_fn, self.train_layouts, args)
-        self.test_env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(self.test_layout), horizon=400)
         self.grid_shape = self.train_dataset.grid_shape
         visual_obs, agent_obss = self.encode_state_fn(self.test_env.mdp, self.test_env.state,
                                                       self.grid_shape, self.args.horizon)
         visual_obs_shape = visual_obs[0].shape
         agent_obs_shape = agent_obss[0].shape
-        print(visual_obs_shape, agent_obs_shape)
         self.players = (
             BehaviouralCloning(self.device, visual_obs_shape, agent_obs_shape, pred_subtasks, cond_subtasks),
             BehaviouralCloning(self.device, visual_obs_shape, agent_obs_shape, pred_subtasks, cond_subtasks)

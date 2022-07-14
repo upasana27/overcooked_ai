@@ -41,8 +41,8 @@ class OvercookedDataset(Dataset):
         self.grid_shape = [0, 0]
         print(self.main_trials.layout_name.unique())
         for layout in self.main_trials.layout_name.unique():
-            env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(layout), horizon=400)
-            self.layout_to_env[layout] = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(layout), horizon=400)
+            env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(layout), horizon=args.horizon)
+            self.layout_to_env[layout] = env
             self.grid_shape[0] = max(env.mdp.shape[0], self.grid_shape[0])
             self.grid_shape[1] = max(env.mdp.shape[1], self.grid_shape[1])
 
@@ -80,7 +80,7 @@ class OvercookedDataset(Dataset):
                 state = json.loads(state)
             state = OvercookedState.from_dict(state)
             env = self.layout_to_env[df['layout_name']]
-            visual_obs, agent_obs = self.encode_state_fn(env.mdp, env.state, self.grid_shape, args.horizon)
+            visual_obs, agent_obs = self.encode_state_fn(env.mdp, state, self.grid_shape, args.horizon)
             df['state'] = state
             df['visual_obs'] = visual_obs
             df['agent_obs'] = agent_obs
