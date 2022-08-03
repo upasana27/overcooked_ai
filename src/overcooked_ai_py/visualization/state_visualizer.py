@@ -16,6 +16,7 @@ class StateVisualizer:
     SOUPS_IMG = MultiFramePygameImage(os.path.join(GRAPHICS_DIR, 'soups.png'), os.path.join(GRAPHICS_DIR, 'soups.json'))
     CHEFS_IMG = MultiFramePygameImage(os.path.join(GRAPHICS_DIR, 'chefs.png'), os.path.join(GRAPHICS_DIR, 'chefs.json'))
     ARROW_IMG = pygame.image.load(os.path.join(GRAPHICS_DIR, 'arrow.png'))
+    CIRCLE_IMG = pygame.image.load(os.path.join(GRAPHICS_DIR, 'red_circle.png'))
     INTERACT_IMG = pygame.image.load(os.path.join(GRAPHICS_DIR, 'interact.png'))
     STAY_IMG = pygame.image.load(os.path.join(GRAPHICS_DIR, 'stay.png'))
     UNSCALED_TILE_SIZE = 15
@@ -26,7 +27,7 @@ class StateVisualizer:
         "window_fps": 30,
         "player_colors": ['blue', 'green'],
         "is_rendering_hud": True,
-        "hud_font_size": 10,
+        "hud_font_size": 20,
         "hud_font_path": roboto_path, 
         "hud_system_font_name": None, # if set to None use hud_font_path
         "hud_font_color": (255,255,255), # white
@@ -165,7 +166,7 @@ class StateVisualizer:
 
         return img_path
 
-    def render_state(self, state, grid, hud_data=None, action_probs=None):
+    def render_state(self, state, grid, hud_data=None, action_probs=None, pidx=None, p0_action=None):
         """
         returns surface with rendered game state scaled to selected size,
         decoupled from display_rendered_state function to make testing easier
@@ -175,8 +176,13 @@ class StateVisualizer:
         assert grid
         grid_surface = pygame.surface.Surface(self._unscaled_grid_pixel_size(grid))
         self._render_grid(grid_surface, grid)
-        self._render_players(grid_surface, state.players)
-        self._render_objects(grid_surface, state.objects, grid)       
+        self._render_players(grid_surface, state.players, pidx)
+        self._render_objects(grid_surface, state.objects, grid)
+
+        if p0_action is not None:
+            p0_action_prob = [0] * len(Action.ALL_ACTIONS)
+            p0_action_prob[p0_action] = 1
+            self._render_actions_probs(grid_surface, state.players, [p0_action_prob, [0] * len(Action.ALL_ACTIONS)])
 
         if self.scale_by_factor != 1:
             grid_surface = scale_surface_by_factor(grid_surface, self.scale_by_factor)
@@ -255,7 +261,7 @@ class StateVisualizer:
         (x,y) = position
         return (self.tile_size * x, self.tile_size * y)
 
-    def _render_players(self, surface, players):
+    def _render_players(self, surface, players, pidx=None):
         def chef_frame_name(direction_name, held_object_name):
             frame_name = direction_name
             if held_object_name:
@@ -283,6 +289,11 @@ class StateVisualizer:
 
             self.CHEFS_IMG.blit_on_surface(surface, self._position_in_unscaled_pixels(player.position), chef_frame_name(direction_name, held_object_name))
             self.CHEFS_IMG.blit_on_surface(surface, self._position_in_unscaled_pixels(player.position), hat_frame_name(direction_name, player_color_name))
+            # print(f'{player_num} =? {pidx}')
+            if pidx is not None and player_num == pidx:
+                rescaled_circle = pygame.transform.scale(self.CIRCLE_IMG, (self.UNSCALED_TILE_SIZE, self.UNSCALED_TILE_SIZE))
+                self._render_on_tile_position(surface, rescaled_circle, player.position, horizontal_align="center", vertical_align="center")
+                # self.CHEFS_IMG.blit_on_surface(surface, self._position_in_unscaled_pixels(player.position), hat_frame_name(direction_name, 'red'))
 
     @staticmethod
     def _soup_frame_name(ingredients_names, status):
@@ -384,28 +395,32 @@ class StateVisualizer:
     def _calculate_hud_height(self, hud_data):
         return self.hud_margin_top + len(hud_data) * self.hud_line_height + self.hud_margin_bottom
 
-    def _render_on_tile_position(self, scaled_grid_surface, source_surface, tile_position, horizontal_align="left", vertical_align="top"):
+    def _render_on_tile_position(self, game_surface, img, tile_position, horizontal_align="left", vertical_align="top"):
         assert vertical_align in ["top", "center", "bottom"]
-        left_x, top_y = self._position_in_scaled_pixels(tile_position)
+        left_x, top_y = self._position_in_unscaled_pixels(tile_position)
+        TS = self.UNSCALED_TILE_SIZE
         if horizontal_align == "left":
             x = left_x
         elif horizontal_align == "center":
-            x = left_x + (self.tile_size - source_surface.get_width())/2
+            x = left_x + (TS - img.get_width()) / 2
         elif horizontal_align == "right":
-            x = left_x + self.tile_size - source_surface.get_width()
+            x = left_x + TS - img.get_width()
         else:
             raise ValueError("horizontal_align can have one of the values: "+str(["left", "center", "right"]))
 
         if vertical_align == "top":
             y = top_y
         elif vertical_align == "center":
-            y = top_y + (self.tile_size - source_surface.get_height())/2
+            y = top_y + (TS - img.get_height()) / 2
         elif vertical_align == "bottom":
-            y = top_y + self.tile_size - source_surface.get_height()
+            y = top_y + TS - img.get_height()
         else:
             raise ValueError("vertical_align can have one of the values: "+str(["top", "center", "bottom"]))
 
-        scaled_grid_surface.blit(source_surface, (x, y))
+        print(img,left_x, top_y, TS, x, y)
+
+        game_surface.blit(img, (x, y))
+        # img.blit_on_surface(game_surface, self._position_in_unscaled_pixels( (x, y) ))
 
     def _render_actions_probs(self, surface, players, action_probs):
         direction_to_rotation = {Direction.NORTH:0, Direction.WEST:90 , Direction.SOUTH:180, Direction.EAST:270}
@@ -415,10 +430,11 @@ class StateVisualizer:
             Direction.SOUTH: {"horizontal_align": "center", "vertical_align":"top"},
             Direction.EAST: {"horizontal_align": "left", "vertical_align":"center"}}
 
-        rescaled_arrow = pygame.transform.scale(self.ARROW_IMG, (self.tile_size, self.tile_size))
+        TS = self.UNSCALED_TILE_SIZE
+        rescaled_arrow = pygame.transform.scale(self.ARROW_IMG, (TS, TS))
         # divide width by math.sqrt(2) to always fit both interact icon and stay icon into single tile
-        rescaled_interact = pygame.transform.scale(self.INTERACT_IMG, (int(self.tile_size/math.sqrt(2)), self.tile_size))
-        rescaled_stay = pygame.transform.scale(self.STAY_IMG, (int(self.tile_size/math.sqrt(2)), self.tile_size))
+        rescaled_interact = pygame.transform.scale(self.INTERACT_IMG, (int(TS/math.sqrt(2)), TS))
+        rescaled_stay = pygame.transform.scale(self.STAY_IMG, (int(TS/math.sqrt(2)), TS))
         for player, probs in zip(players, action_probs):
             if probs is not None:
                 for action in Action.ALL_ACTIONS:
@@ -433,4 +449,5 @@ class StateVisualizer:
                     else:
                         position = Action.move_in_direction(player.position, action)
                         img =  pygame.transform.rotozoom(rescaled_arrow, direction_to_rotation[action], size)
+                        print(surface.get_size(), player.position, img.get_size())
                         self._render_on_tile_position(surface, img, position, **direction_to_aligns[action])

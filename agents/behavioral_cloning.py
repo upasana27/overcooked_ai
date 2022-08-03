@@ -1,4 +1,5 @@
 from arguments import get_arguments
+from networks import GridEncoder, MLP, weights_init_, get_output_shape
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedState, OvercookedGridworld, Direction, Action
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
@@ -22,39 +23,6 @@ import wandb
 NUM_ACTIONS = 6 # UP, DOWN, LEFT, RIGHT, INTERACT, NOOP
 
 
-def get_output_shape(model, image_dim):
-    return model(th.rand(*(image_dim))).data.shape[1:]
-
-def weights_init_(m):
-    if hasattr(m, 'weight') and m.weight is not None and len(m.weight.shape) > 2:
-        th.nn.init.xavier_uniform_(m.weight, gain=1)
-    if hasattr(m, 'bias') and m.bias is not None and isinstance(m.bias, th.Tensor):
-        th.nn.init.constant_(m.bias, 0)
-
-
-class GridEncoder(nn.Module):
-    def __init__(self, grid_shape, depth=16, act=nn.ReLU):
-        super(GridEncoder, self).__init__()
-        self.kernels = (4, 4, 4, 4) if max(grid_shape) > 64 else (3, 3, 3, 3)
-        self.strides = (2, 2, 2, 2) if max(grid_shape) > 64 else (1, 1, 1, 1)
-        self.padding = (1, 1)
-        layers = []
-        current_channels = grid_shape[0]
-        for i, (k, s) in enumerate(zip(self.kernels, self.strides)):
-            layers.append(nn.Conv2d(current_channels, depth, k, stride=s, padding=self.padding))
-            layers.append(nn.GroupNorm(1, depth))
-            layers.append(act())
-            current_channels = depth
-            depth *= 2
-
-        layers.append(nn.Flatten())
-        self.encoder = nn.Sequential(*layers)
-        self.apply(weights_init_)
-
-    def forward(self, obs):
-        return self.encoder(obs)
-
-
 class BehaviouralCloning(nn.Module):
     def __init__(self, device, visual_obs_shape, agent_obs_shape, pred_subtasks, cond_subtasks,  act=nn.ReLU, hidden_dim=256):
         """
@@ -72,9 +40,11 @@ class BehaviouralCloning(nn.Module):
         self.use_visual_obs = np.prod(visual_obs_shape) > 0
         assert len(agent_obs_shape) == 1
         self.use_agent_obs = np.prod(agent_obs_shape) > 0
-        self.subtasks_obs = Subtasks.NUM_SUBTASKS if cond_subtasks else 0
+        self.subtasks_obs_size = Subtasks.NUM_SUBTASKS if cond_subtasks else 0
         self.pred_subtasks = pred_subtasks
         self.cond_subtasks = cond_subtasks
+        if self.cond_subtasks:
+            self.curr_subtask = F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS)
         # Define CNN for grid-like observations
         if self.use_visual_obs:
             self.cnn = GridEncoder(visual_obs_shape)
@@ -83,12 +53,8 @@ class BehaviouralCloning(nn.Module):
             self.cnn_output_shape = 0
 
         # Define MLP for vector/feature based observations
-        self.mlp = nn.Sequential(
-            nn.Linear(self.cnn_output_shape + agent_obs_shape[0] + self.subtasks_obs, self.hidden_dim),
-            act(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-            act(),
-        )
+        self.mlp = MLP(input_dim=self.cnn_output_shape + agent_obs_shape[0] + self.subtasks_obs_size,
+                       output_dim=self.hidden_dim, hidden_dim=self.hidden_dim)
         self.action_predictor = nn.Linear(self.hidden_dim, NUM_ACTIONS)
         if self.pred_subtasks:
             self.subtask_predictor = nn.Linear(self.hidden_dim, Subtasks.NUM_SUBTASKS)
@@ -117,6 +83,23 @@ class BehaviouralCloning(nn.Module):
             return (Categorical(logits=logits[0]).sample() if sample else th.argmax(logits[0], dim=-1)), logits[1]
         else:
             return Categorical(logits=logits).sample() if sample else th.argmax(logits, dim=-1)
+
+    def predict(self, obs, sample=True):
+        obs = (*obs, self.curr_subtask)
+        preds = self.select_action(obs, sample=sample)
+        if self.cond_subtasks:
+            action = Action.INDEX_TO_ACTION[preds[0]]
+            # Update predicted subtask
+            if action == Action.INTERACT:
+                # pred_subtask[i] = th.softmax(preds[1].detach().squeeze(), dim=-1)
+                ps = th.zeros_like(preds[1].squeeze())
+                ps[th.argmax(preds[1].detach().squeeze(), dim=-1)] = 1
+                self.curr_subtask = ps.float()
+                # print(ps.shape, th.softmax(preds[1].detach().squeeze(), dim=-1).shape)
+        else:
+            action = Action.INDEX_TO_ACTION[preds]
+        return action, None
+
 
 class BC_trainer():
     def __init__(self, encoding_fn, train_layouts, test_layout, args, vis_eval=False, pred_subtasks=True, cond_subtasks=True):

@@ -6,7 +6,7 @@ import numpy as np
 
 
 def encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: tuple, horizon: int,
-                 inc_agent_obs: bool=True, inc_soup_time: bool=True, inc_urgency=True):
+                 inc_agent_obs: bool=True, inc_soup_time: bool=True, inc_urgency=True, p_idx=None):
     """
     CNN Approach. Differs from OAI's lossless state by using 4 (opt. 5) layers instead of 20 and IDs instead of binary masks.
     Optionally adds robot observations (6 1-byte features) that includes additional information in a regular vector form.
@@ -48,11 +48,11 @@ def encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: t
     STATUS_TO_IDX = {agent: idx for idx, agent in enumerate(STATUS)}
 
     num_channels = 5 if inc_soup_time else 4
-    visual_obs = np.zeros( (num_channels, *grid_shape) )
+    visual_obs = np.zeros( (num_channels, *grid_shape), dtype=np.int)
     if inc_agent_obs:
-        agent_obs = np.zeros( (2, 7 if inc_urgency else 6) )
+        agent_obs = np.zeros((2, 7 if inc_urgency else 6), dtype=np.float32)
     else:
-        agent_obs = np.array([[],[]])
+        agent_obs = np.array([[],[]], dtype=np.float32)
 
     # STATUS done throughout
     S1_IDX = 3
@@ -120,19 +120,25 @@ def encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: t
         else:
             raise ValueError(f"Unrecognized object: {item.name}")
 
-    visual_obs = np.tile(visual_obs, (2,1,1,1))
-    return visual_obs, agent_obs
+    if p_idx is not None:
+        agent_obs = agent_obs[p_idx]
+    else:
+        visual_obs = np.tile(visual_obs, (2,1,1,1))
+    return {'visual_obs': visual_obs, 'agent_obs': agent_obs}
 
-def OAI_BC_featurize_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: tuple, horizon: int, num_pots: int = 2):
+def OAI_BC_featurize_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: tuple, horizon: int, num_pots: int = 2, p_idx=None):
     """
     Uses Overcooked-ai's BC 64 dim BC featurization. Only returns agent_obs
     """
     mlam = MediumLevelActionManager.from_pickle_or_compute(mdp, NO_COUNTERS_PARAMS, force_compute=True)
     agent_obs = mdp.featurize_state(state, mlam, num_pots=num_pots)
-    agent_obs = np.stack(agent_obs, axis=0)
-    return np.array([[],[]]), agent_obs
+    if p_idx is not None:
+        agent_obs = agent_obs[p_idx]
+    else:
+        agent_obs = np.stack(agent_obs, axis=0)
+    return {'visual_obs': np.array([[],[]]), 'agent_obs': agent_obs}
 
-def OAI_RL_encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: tuple, horizon: int):
+def OAI_RL_encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: tuple, horizon: int, p_idx=True):
     """
     Uses Overcooked-ai's RL lossless encoding by stacking 20 binary masks (20xNxM). Only returns visual_obss
     """
@@ -145,7 +151,9 @@ def OAI_RL_encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_s
     assert all([visual_obs.shape[i] <= grid_shape[i] for i in range(len(visual_obs.shape))])
     padding_amount = [(0, grid_shape[i] - visual_obs.shape[i]) for i in range(len(grid_shape))]
     visual_obs = np.pad(visual_obs, padding_amount)
-    return visual_obs, np.array([[], []])
+    if p_idx is not None:
+        visual_obs = visual_obs[p_idx]
+    return {'visual_obs': visual_obs, 'agent_obs': np.array([[], []])}
 
 ENCODING_SCHEMES = {
     'OAI_feats': OAI_BC_featurize_state,
