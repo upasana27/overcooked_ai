@@ -47,7 +47,10 @@ class OvercookedDataset(Dataset):
             self.grid_shape[1] = max(env.mdp.shape[1], self.grid_shape[1])
 
         print(f'Number of {str(layouts)} trials: {len(self.main_trials)}, max grid size: {self.grid_shape}')
-        # print(self.main_trials['layout_name'])
+        # Remove all transitions where both players noop-ed
+        self.main_trials = self.main_trials[self.main_trials['joint_action'] != '[[0, 0], [0, 0]]']
+        print(f'Number of {str(layouts)} trials without double noops: {len(self.main_trials)}')
+
 
         self.action_ratios = {k: 0 for k in Action.ALL_ACTIONS}
 
@@ -90,10 +93,6 @@ class OvercookedDataset(Dataset):
         self.main_trials = self.main_trials.apply(str_to_obss, axis=1)
 
         self.add_subtasks()
-
-        # Remove all transitions where both players noop-ed
-        self.main_trials = self.main_trials[self.main_trials['joint_action'] != '[[0, 0], [0, 0]]']
-        print(f'Number of {args.layout} trials without double noops: {len(self.main_trials)}')
 
         # Calculate class weights for cross entropy
         self.action_weights = np.zeros(6)
