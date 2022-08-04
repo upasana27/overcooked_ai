@@ -59,6 +59,9 @@ class BehaviouralCloning(nn.Module):
         self.action_predictor = nn.Linear(self.hidden_dim, NUM_ACTIONS)
         if self.pred_subtasks:
             self.subtask_predictor = nn.Linear(self.hidden_dim, Subtasks.NUM_SUBTASKS)
+            # Predicted subtask to perform next, stars as unknown
+            unknown_task_id = th.tensor(Subtasks.SUBTASKS_TO_IDS['unknown']).to(self.device)
+            self.curr_subtask = F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS)
         self.apply(weights_init_)
         self.to(self.device)
 
@@ -79,7 +82,7 @@ class BehaviouralCloning(nn.Module):
 
     def select_action(self, obs, sample=True):
         """Select action. If sample is True, sample action from distribution, else pick best scoring action"""
-        logits = self.forward([th.tensor(o, device=self.device).unsqueeze(dim=0) for o in obs])
+        logits = self.forward([o.unsqueeze(dim=0).to(self.device) for o in obs]) # th.tensor(o, device=self.device).unsqueeze(dim=0)
         if self.pred_subtasks:
             return (Categorical(logits=logits[0]).sample() if sample else th.argmax(logits[0], dim=-1)), logits[1]
         else:
@@ -89,18 +92,20 @@ class BehaviouralCloning(nn.Module):
         obs = (*obs, self.curr_subtask)
         preds = self.select_action(obs, sample=sample)
         if self.cond_subtasks:
-            action = Action.INDEX_TO_ACTION[preds[0]]
+            action = preds[0]
             # Update predicted subtask
-            if action == Action.INTERACT:
-                # pred_subtask[i] = th.softmax(preds[1].detach().squeeze(), dim=-1)
+            if Action.INDEX_TO_ACTION[action] == Action.INTERACT:
                 ps = th.zeros_like(preds[1].squeeze())
                 ps[th.argmax(preds[1].detach().squeeze(), dim=-1)] = 1
                 self.curr_subtask = ps.float()
-                # print(ps.shape, th.softmax(preds[1].detach().squeeze(), dim=-1).shape)
         else:
-            action = Action.INDEX_TO_ACTION[preds]
+            action = preds
         return action, None
 
+    def reset(self):
+        # Predicted subtask to perform next, stars as unknown
+        unknown_task_id = th.tensor(Subtasks.SUBTASKS_TO_IDS['unknown']).to(self.device)
+        self.pred_subtask = F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS)
 
 class BC_trainer():
     def __init__(self, encoding_fn, train_layouts, test_layout, args, vis_eval=False, pred_subtasks=True, cond_subtasks=True):
@@ -154,16 +159,12 @@ class BC_trainer():
                              becomes deterministic
         :return: average true reward and average shaped reward
         """
-
         average_reward = []
         shaped_reward = []
         for trial in range(num_trials):
             self.eval_env.reset()
-
-            unknown_task_id = th.tensor(Subtasks.SUBTASKS_TO_IDS['unknown']).to(self.device)
-            # Predicted subtask to perform next, stars as unknown
-            pred_subtask = [F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS),
-                            F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS)]
+            for p in self.players:
+                p.reset()
             trial_reward, trial_shaped_r = 0, 0
             done = False
             timestep = 0
@@ -176,17 +177,8 @@ class BC_trainer():
                 # Get next actions - we don't use overcooked gym env for this because we want to allow subtasks
                 joint_action = []
                 for i in range(2):
-                    pi_obs = [o[i] for o in (vis_obs, agent_obs, pred_subtask)]
-                    preds = self.players[i].select_action(pi_obs, sample)
-                    if self.pred_subtasks:
-                        action = preds[0]
-                        # Update predicted subtask
-                        if Action.INDEX_TO_ACTION[action] == Action.INTERACT:
-                            ps = th.zeros_like(preds[1].squeeze())
-                            ps[th.argmax(preds[1].detach().squeeze(), dim=-1)] = 1
-                            pred_subtask[i] = ps.float()
-                    else:
-                        action = preds
+                    pi_obs = [o[i] for o in (vis_obs, agent_obs)]
+                    action, _ = self.players[i].predict(pi_obs, sample)
                     joint_action.append(action)
                 joint_action = tuple(joint_action)
                 # Environment step
