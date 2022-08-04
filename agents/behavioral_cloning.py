@@ -1,9 +1,9 @@
 from arguments import get_arguments
 from networks import GridEncoder, MLP, weights_init_, get_output_shape
-from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
-from overcooked_ai_py.mdp.overcooked_mdp import OvercookedState, OvercookedGridworld, Direction, Action
+from overcooked_ai_py.mdp.overcooked_mdp import Action
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
 from overcooked_dataset import OvercookedDataset, Subtasks
+from overcooked_gym_env import OvercookedGymEnv
 from state_encodings import ENCODING_SCHEMES
 
 from copy import deepcopy
@@ -44,6 +44,7 @@ class BehaviouralCloning(nn.Module):
         self.pred_subtasks = pred_subtasks
         self.cond_subtasks = cond_subtasks
         if self.cond_subtasks:
+            unknown_task_id = th.tensor(Subtasks.SUBTASKS_TO_IDS['unknown']).to(self.device)
             self.curr_subtask = F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS)
         # Define CNN for grid-like observations
         if self.use_visual_obs:
@@ -124,13 +125,12 @@ class BC_trainer():
         self.cond_subtasks = cond_subtasks
         self.train_layouts = train_layouts
         self.test_layout = test_layout
-        self.test_env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(self.test_layout), horizon=args.horizon)
         self.train_dataset = OvercookedDataset(encoding_fn, self.train_layouts, args)
         self.grid_shape = self.train_dataset.grid_shape
-        visual_obs, agent_obss = self.encode_state_fn(self.test_env.mdp, self.test_env.state,
-                                                      self.grid_shape, self.args.horizon)
-        visual_obs_shape = visual_obs[0].shape
-        agent_obs_shape = agent_obss[0].shape
+        self.eval_env = OvercookedGymEnv(layout=test_layout, encoding_fn=encoding_fn, grid_shape=self.grid_shape, args=args)
+        obs = self.eval_env.get_obs()
+        visual_obs_shape = obs['visual_obs'][0].shape
+        agent_obs_shape = obs['agent_obs'][0].shape
         self.players = (
             BehaviouralCloning(self.device, visual_obs_shape, agent_obs_shape, pred_subtasks, cond_subtasks),
             BehaviouralCloning(self.device, visual_obs_shape, agent_obs_shape, pred_subtasks, cond_subtasks)
@@ -143,11 +143,7 @@ class BC_trainer():
                 self.subtask_criterion = nn.CrossEntropyLoss(weight=th.tensor(self.train_dataset.get_subtask_weights(), dtype=th.float32, device=self.device),
                                                              reduction='none')
         if self.visualize_evaluation:
-            pygame.init()
-            surface = StateVisualizer().render_state(self.test_env.state, grid=self.test_env.mdp.terrain_mtx)
-            self.window = pygame.display.set_mode(surface.get_size(), HWSURFACE | DOUBLEBUF | RESIZABLE)
-            self.window.blit(surface, (0, 0))
-            pygame.display.flip()
+            self.eval_env.setup_visualization()
 
     def evaluate(self, num_trials=10, sample=True):
         """
@@ -158,13 +154,11 @@ class BC_trainer():
                              becomes deterministic
         :return: average true reward and average shaped reward
         """
-        for i in range(2):
-            self.players[i].eval()
+
         average_reward = []
         shaped_reward = []
         for trial in range(num_trials):
-            self.test_env.reset()
-            prev_state, prev_actions = deepcopy(self.test_env.state), (Action.STAY, Action.STAY)
+            self.eval_env.reset()
 
             unknown_task_id = th.tensor(Subtasks.SUBTASKS_TO_IDS['unknown']).to(self.device)
             # Predicted subtask to perform next, stars as unknown
@@ -174,59 +168,40 @@ class BC_trainer():
             done = False
             timestep = 0
             while not done:
-                if self.visualize_evaluation:
-                    self.render()
-                    time.sleep(0.1)
                 # Encode Overcooked state into observations for agents
-                obs = self.encode_state_fn(self.test_env.mdp, self.test_env.state, self.grid_shape, self.args.horizon)
-                vis_obs, agent_obs = (th.tensor(o, device=self.device, dtype=th.float32) for o in obs)
+                obs = self.eval_env.get_obs()
+                vis_obs = th.tensor(obs['visual_obs'], device=self.device, dtype=th.float32)
+                agent_obs = th.tensor(obs['agent_obs'], device=self.device, dtype=th.float32)
 
-                # Get next actions
+                # Get next actions - we don't use overcooked gym env for this because we want to allow subtasks
                 joint_action = []
                 for i in range(2):
                     pi_obs = [o[i] for o in (vis_obs, agent_obs, pred_subtask)]
                     preds = self.players[i].select_action(pi_obs, sample)
                     if self.pred_subtasks:
-                        action = Action.INDEX_TO_ACTION[preds[0]]
+                        action = preds[0]
                         # Update predicted subtask
                         if action == Action.INTERACT:
-                            # pred_subtask[i] = th.softmax(preds[1].detach().squeeze(), dim=-1)
                             ps = th.zeros_like(preds[1].squeeze())
                             ps[th.argmax(preds[1].detach().squeeze(), dim=-1)] = 1
                             pred_subtask[i] = ps.float()
-                            # print(ps.shape, th.softmax(preds[1].detach().squeeze(), dim=-1).shape)
                     else:
-                        action = Action.INDEX_TO_ACTION[preds]
-                    # If the state didn't change from the previous timestep and the agent is choosing the same action
-                    # then play a random action instead. Prevents agents from getting stuck
-                    if self.test_env.state.time_independent_equal(prev_state) and action == prev_actions[i]:
-                        action = np.random.choice(Action.ALL_ACTIONS)
+                        action = preds
                     joint_action.append(action)
                 joint_action = tuple(joint_action)
-
-                prev_state, prev_actions = deepcopy(self.test_env.state), joint_action
                 # Environment step
-                next_state, reward, done, info = self.test_env.step(joint_action)
+                next_state, reward, done, info = self.eval_env.step(joint_action)
                 # Update metrics
                 trial_reward += reward
                 trial_shaped_r += np.sum(info['shaped_r_by_agent'])
                 timestep += 1
-
-            if self.visualize_evaluation:
-                print(f'Reward received for trial {trial}: {trial_reward}')
             average_reward.append(trial_reward)
             shaped_reward.append(trial_shaped_r)
         return np.mean(average_reward), np.mean(shaped_reward)
 
-    def render(self):
-        """ Render game env """
-        surface = StateVisualizer().render_state(self.test_env.state, grid=self.test_env.mdp.terrain_mtx)
-        self.window = pygame.display.set_mode(surface.get_size(), HWSURFACE | DOUBLEBUF | RESIZABLE)
-        self.window.blit(surface, (0, 0))
-        pygame.display.flip()
-
     def train_on_batch(self, batch):
         """Train BC agent on a batch of data"""
+        # print({k: v for k,v in batch.items()})
         batch = {k: v.to(self.device) for k,v in batch.items()}
         vo, ao, action, subtasks = batch['visual_obs'].float(), batch['agent_obs'].float(), \
                                    batch['joint_action'].long(), batch['subtasks'].long()

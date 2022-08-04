@@ -87,10 +87,10 @@ class OvercookedDataset(Dataset):
                 state = json.loads(state)
             state = OvercookedState.from_dict(state)
             env = self.layout_to_env[df['layout_name']]
-            visual_obs, agent_obs = self.encode_state_fn(env.mdp, state, self.grid_shape, args.horizon)
+            obs = self.encode_state_fn(env.mdp, state, self.grid_shape, args.horizon)
             df['state'] = state
-            df['visual_obs'] = visual_obs
-            df['agent_obs'] = agent_obs
+            df['visual_obs'] = obs['visual_obs']
+            df['agent_obs'] = obs['agent_obs']
             return df
 
         self.main_trials['joint_action'] = self.main_trials['joint_action'].apply(str_to_actions)

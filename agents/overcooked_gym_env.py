@@ -114,6 +114,8 @@ class OvercookedGymEnv(Env):
 
     def run_full_episode(self):
         assert self.p1_agent is not None and self.p2_agent is not None
+        self.p1_agent.eval()
+        self.p2_agent.eval()
         self.reset()
         done = False
         total_reward = 0
