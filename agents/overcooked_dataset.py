@@ -54,7 +54,6 @@ class OvercookedDataset(Dataset):
         # Remove all transitions where both players noop-ed
         self.main_trials = self.main_trials[self.main_trials['joint_action'] != '[[0, 0], [0, 0]]']
         print(f'Number of {str(layouts)} trials without double noops: {len(self.main_trials)}')
-        # print(self.main_trials['layout_name'])
 
         self.action_ratios = {k: 0 for k in Action.ALL_ACTIONS}
 

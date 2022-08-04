@@ -72,7 +72,7 @@ class BehaviouralCloning(nn.Module):
         if self.use_agent_obs:
             latent_state.append(agent_obs)
         if self.cond_subtasks:
-            latent_state.append(subtask) #F.one_hot(subtask, num_classes=Subtasks.NUM_SUBTASKS))
+            latent_state.append(subtask.to(self.device))
         latent_feats = self.mlp(th.cat(latent_state, dim=-1))
         action_logits = self.action_predictor(latent_feats)
         return (action_logits, self.subtask_predictor(latent_feats)) if self.pred_subtasks else action_logits
@@ -181,7 +181,7 @@ class BC_trainer():
                     if self.pred_subtasks:
                         action = preds[0]
                         # Update predicted subtask
-                        if action == Action.INTERACT:
+                        if Action.INDEX_TO_ACTION[action] == Action.INTERACT:
                             ps = th.zeros_like(preds[1].squeeze())
                             ps[th.argmax(preds[1].detach().squeeze(), dim=-1)] = 1
                             pred_subtask[i] = ps.float()
@@ -192,7 +192,7 @@ class BC_trainer():
                 # Environment step
                 next_state, reward, done, info = self.eval_env.step(joint_action)
                 # Update metrics
-                trial_reward += reward
+                trial_reward += np.sum(info['sparse_r_by_agent'])
                 trial_shaped_r += np.sum(info['shaped_r_by_agent'])
                 timestep += 1
             average_reward.append(trial_reward)
@@ -253,9 +253,9 @@ class BC_trainer():
         metrics['total_loss'] = sum([v for k, v in metrics.items() if 'loss' in k])
         return metrics
 
-    def training(self, num_epochs=200):
+    def training(self, exp_name, num_epochs=100):
         """ Training routine """
-        wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(args.base_dir / 'wandb'))#, mode='disabled')
+        run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(args.base_dir / 'wandb'), reinit=True, name=exp_name)#, mode='disabled')
         best_loss = float('inf')
         best_reward = 0
         for epoch in range(num_epochs):
@@ -270,6 +270,7 @@ class BC_trainer():
                 print(f'Best reward achieved on epoch {epoch}, saving models')
                 self.save(tag='best_reward')
                 best_reward = mean_reward
+        run.finish()
 
     def save(self, tag=''):
         save_path = self.args.base_dir / 'saved_models' / f'{args.exp_name}_{tag}'
@@ -292,5 +293,27 @@ if __name__ == '__main__':
         bct.load()
         bct.evaluate(10)
     else:
+        # bct = BC_trainer(encoding_fn, 'all', 'asymmetric_advantages', args, vis_eval=False)
+        # bct.training('all')
+        # del bct
+        #
+        # bct = BC_trainer(encoding_fn, 'all', 'asymmetric_advantages', args, vis_eval=False, cond_subtasks=False)
+        # bct.training('all_no_subtask')
+        # del bct
+
         bct = BC_trainer(encoding_fn, ['asymmetric_advantages'], 'asymmetric_advantages', args, vis_eval=False)
-        bct.training()
+        bct.training('single')
+        del bct
+
+        # bct = BC_trainer(encoding_fn, ['asymmetric_advantages'], 'asymmetric_advantages', args, vis_eval=False, cond_subtasks=False)
+        # bct.training('single_no_subtask')
+        # del bct
+        #
+        # bct = BC_trainer(encoding_fn, ['cramped_room','coordination_ring','counter_circuit','forced_coordination'], 'asymmetric_advantages', args, vis_eval=False)
+        # bct.training('all_but')
+        # del bct
+        #
+        # bct = BC_trainer(encoding_fn, ['cramped_room','coordination_ring','counter_circuit','forced_coordination'], 'asymmetric_advantages', args, vis_eval=False, cond_subtasks=False)
+        # bct.training('all_but_no_subtask')
+        # del bct
+
