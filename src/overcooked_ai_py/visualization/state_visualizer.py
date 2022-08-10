@@ -111,7 +111,7 @@ class StateVisualizer:
         img_path (str): img_directory_path - path to directory where consequtive images will be saved
         ipython_display(bool): if True render slider with rendered states
         hud_data(list(dict)): hud data for every timestep
-        action_probs(list(list((list(float))))): action probs for every player and timestep acessed in the way action_probs[timestep][player][action]
+        action_probs(list(list((list(float))))): action probs for every agent and timestep acessed in the way action_probs[timestep][agent][action]
         """
         states = trajectories["ep_states"][trajectory_idx]
         grid = trajectories["mdp_params"][trajectory_idx]["terrain"]
@@ -145,9 +145,9 @@ class StateVisualizer:
         hud_data (dict): dict with hud data, keys are used for string that describes after using _key_to_hud_text on them
         grid (iterable): 2d map of the layout, when not supplied take grid from object attribute NOTE: when grid in both method param and object atribute is no supplied it will raise an error
         img_path (str): if it is not None save image to specific path
-        ipython_display (bool): if True render state in ipython cell, if img_path is None create file with randomized name in /tmp directory
+        ipython_display (bool): if True render state in ipython cell, if img_path is None create file with randomized tag in /tmp directory
         window_display (bool): if True render state into pygame window
-        action_probs(list(list(float))): action probs for every player acessed in the way action_probs[player][action]
+        action_probs(list(list(float))): action probs for every agent acessed in the way action_probs[agent][action]
         """
         assert window_display or img_path or ipython_display, "specify at least one of the ways to output result state image: window_display, img_path, or ipython_display"
         surface = self.render_state(state, grid, hud_data, action_probs=action_probs)
@@ -176,13 +176,13 @@ class StateVisualizer:
         assert grid
         grid_surface = pygame.surface.Surface(self._unscaled_grid_pixel_size(grid))
         self._render_grid(grid_surface, grid)
-        self._render_players(grid_surface, state.players, pidx)
+        self._render_players(grid_surface, state.agents, pidx)
         self._render_objects(grid_surface, state.objects, grid)
 
         if p0_action is not None:
             p0_action_prob = [0] * len(Action.ALL_ACTIONS)
             p0_action_prob[p0_action] = 1
-            self._render_actions_probs(grid_surface, state.players, [p0_action_prob, [0] * len(Action.ALL_ACTIONS)])
+            self._render_actions_probs(grid_surface, state.agents, [p0_action_prob, [0] * len(Action.ALL_ACTIONS)])
 
         if self.scale_by_factor != 1:
             grid_surface = scale_surface_by_factor(grid_surface, self.scale_by_factor)
@@ -193,7 +193,7 @@ class StateVisualizer:
 
         # arrows does not seem good when rendered in very small resolution
         if self.is_rendering_action_probs and action_probs is not None:
-            self._render_actions_probs(grid_surface, state.players, action_probs)
+            self._render_actions_probs(grid_surface, state.agents, action_probs)
 
         if self.is_rendering_hud and hud_data:
             hud_width = self.width or grid_surface.get_width()
@@ -293,7 +293,7 @@ class StateVisualizer:
             if pidx is not None and player_num == pidx:
                 rescaled_circle = pygame.transform.scale(self.CIRCLE_IMG, (self.UNSCALED_TILE_SIZE, self.UNSCALED_TILE_SIZE))
                 self._render_on_tile_position(surface, rescaled_circle, player.position, horizontal_align="center", vertical_align="center")
-                # self.CHEFS_IMG.blit_on_surface(surface, self._position_in_unscaled_pixels(player.position), hat_frame_name(direction_name, 'red'))
+                # self.CHEFS_IMG.blit_on_surface(surface, self._position_in_unscaled_pixels(agent.position), hat_frame_name(direction_name, 'red'))
 
     @staticmethod
     def _soup_frame_name(ingredients_names, status):

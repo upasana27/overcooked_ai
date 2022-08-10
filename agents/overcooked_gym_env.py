@@ -15,8 +15,7 @@ class OvercookedGymEnv(Env):
 
     def __init__(self, p1_agent=None, p2_agent=None, layout=None, encoding_fn=None, grid_shape=None,
                  shape_rewards=False, args=None):
-        self.p1_agent = p1_agent
-        self.p2_agent = p2_agent
+        self.agents = [p1_agent, p2_agent]
         self.layout = layout
         self.env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(layout), horizon=args.horizon)
         self.encoding_fn = encoding_fn
@@ -27,12 +26,12 @@ class OvercookedGymEnv(Env):
         self.step_count = 0
 
         self.prev_state, self.prev_actions = deepcopy(self.env.state), (Action.STAY, Action.STAY)
-        if all([self.p1_agent, self.p2_agent]):  # We control no agents
+        if all(self.agents):  # We control no agents
             self.p_idx = None
             self.action_space = spaces.Space()
             self.observation_space = spaces.Space()
-        elif any([self.p1_agent, self.p2_agent]):  # We control 1 agent
-            self.p_idx = 1 if p1_agent else 0 # We play the agent that is not defined
+        elif any(self.agents):  # We control 1 agent
+            self.p_idx = 1 if self.agents[0] else 0 # We play the agent that is not defined
             self.action_space = spaces.Discrete(len(Action.ALL_ACTIONS))
             obs = self.encoding_fn(self.env.mdp, self.env.state, self.grid_shape, args.horizon, p_idx=self.p_idx)
             # TODO improve bounds for each dimension
@@ -54,11 +53,8 @@ class OvercookedGymEnv(Env):
                 "agent_obs":  spaces.Box(0, self.args.horizon, obs['agent_obs'].shape, dtype=np.float32)
             })
 
-    def set_p1_agent(self, p1_agent):
-        self.p1_agent = p1_agent
-
-    def set_p2_agent(self, p2_agent):
-        self.p2_agent = p2_agent
+    def set_agent(self, agent, idx):
+        self.agents[idx] = agent
 
     def setup_visualization(self):
         self.visualization_enabled = True
@@ -73,11 +69,11 @@ class OvercookedGymEnv(Env):
 
     def step(self, action):
         joint_action = [None, None]
-        if all([self.p1_agent, self.p2_agent]): # We control no agents
-            joint_action = [self.p1_agent.predict(self.get_obs(p_idx=0))[0], self.p2_agent.predict(self.get_obs(p_idx=1))[0]]
-        elif any([self.p1_agent, self.p2_agent]): # We control 1 agent
-            joint_action[0] = self.p1_agent.predict(self.get_obs(p_idx=0))[0] if self.p1_agent else action
-            joint_action[1] = self.p2_agent.predict(self.get_obs(p_idx=1))[0] if self.p2_agent else action
+        if all(self.agents): # We control no agents
+            joint_action = [self.agents[i].predict(self.get_obs(p_idx=i))[0] for i in range(2)]
+        elif any(self.agents): # We control 1 agent
+            joint_action = [(self.agents[i].predict(self.get_obs(p_idx=i))[0] if self.agents[i] else action)
+                            for i in range(2)]
         else: # We control both agents
             joint_action = action
 
@@ -92,7 +88,7 @@ class OvercookedGymEnv(Env):
         next_state, reward, done, info = self.env.step(joint_action)
         if self.shape_rewards:
             ratio = min(self.step_count / 2.5e6, 1)
-            sparse_r = info['sparse_r_by_agent'][self.p_idx] if self.p_idx else sum(info['sparse_r_by_agent'])
+            sparse_r = sum(info['sparse_r_by_agent'])
             shaped_r = info['shaped_r_by_agent'][self.p_idx] if self.p_idx else sum(info['shaped_r_by_agent'])
             reward = sparse_r * ratio + shaped_r * (1 - ratio)
         return self.get_obs(self.p_idx), reward, done, info
@@ -113,9 +109,9 @@ class OvercookedGymEnv(Env):
         pygame.quit()
 
     def run_full_episode(self):
-        assert self.p1_agent is not None and self.p2_agent is not None
-        self.p1_agent.eval()
-        self.p2_agent.eval()
+        assert self.agents[0] is not None and self.agents[1] is not None
+        self.agents[0].eval()
+        self.agents[1].eval()
         self.reset()
         done = False
         total_reward = 0
@@ -123,7 +119,7 @@ class OvercookedGymEnv(Env):
             if self.visualization_enabled:
                 self.render()
             obs, reward, done, info = self.step(None)
-            total_reward += reward
+            total_reward += np.sum(info['sparse_r_by_agent'])
         return total_reward
 
 register(

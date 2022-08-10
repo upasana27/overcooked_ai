@@ -9,13 +9,14 @@ def get_arguments():
     """
     parser = argparse.ArgumentParser(description='PyTorch Soft Actor-Critic Args')
     parser.add_argument('--layout', default='asymmetric_advantages',  help='Overcooked map to use')
+    parser.add_argument('--subtasks', action='store_true', help='Condition IL agents on subtasks (default: False)')
     parser.add_argument('--horizon', type=int, default=400, help='Max timesteps in a rollout')
     parser.add_argument('--encoding-fn', type=str, default='dense_lossless',
                         help='Encoding scheme to use. Options: "dense_lossless", "OAI_lossless", "OAI_feats"')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate')
     parser.add_argument('--batch-size', type=int, default=256, help='learning rate')
     parser.add_argument('--exp-name', type=str, default='default_exp',
-                        help='Name of experiment. Used to name save files.')
+                        help='Name of experiment. Used to tag save files.')
     parser.add_argument('--base-dir', type=str, default=Path.cwd(),
                         help='Base directory to save all models, data, tensorboard metrics.')
     parser.add_argument('--data-path', type=str, default='data',

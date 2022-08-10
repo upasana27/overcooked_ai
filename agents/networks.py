@@ -53,7 +53,7 @@ class MLP(nn.Module):
         return self.mlp(obs)
 
 
-class OAIFeatureExtractor(BaseFeaturesExtractor):
+class OAISinglePlayerFeatureExtractor(BaseFeaturesExtractor):
     """
         :param observation_space: (gym.Space)
         :param features_dim: (int) Number of features extracted.
@@ -61,13 +61,13 @@ class OAIFeatureExtractor(BaseFeaturesExtractor):
         """
 
     def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = 256):
-        super(OAIFeatureExtractor, self).__init__(observation_space, features_dim)
+        super(OAISinglePlayerFeatureExtractor, self).__init__(observation_space, features_dim)
         self.use_visual_obs = np.prod(observation_space['visual_obs'].shape) > 0
         self.use_vector_obs = np.prod(observation_space['agent_obs'].shape) > 0
         if self.use_visual_obs:
-            self.visual_encoder = GridEncoder(observation_space['visual_obs'].shape)
-            self.encoder_output_shape = get_output_shape(self.visual_encoder,
-                                                                [1, *observation_space['visual_obs'].shape])[0]
+            self.vis_encoder = GridEncoder(observation_space['visual_obs'].shape)
+            test_shape = [1, *observation_space['visual_obs'].shape]
+            self.encoder_output_shape = get_output_shape(self.vis_encoder, test)[0]
         else:
             self.encoder_output_shape = 0
 
@@ -83,8 +83,43 @@ class OAIFeatureExtractor(BaseFeaturesExtractor):
         # Concatenate all input features before passing them to MLP
         if self.use_visual_obs:
             # Convert all grid-like observations to features using CNN
-            latent_state.append(self.visual_encoder(visual_obs))
+            latent_state.append(self.vis_encoder.forward(visual_obs))
         if self.use_vector_obs:
             latent_state.append(th.flatten(agent_obs, start_dim=1))
-        # print(self.visual_encoder(visual_obs).shape, agent_obs.shape)
-        return self.vector_encoder(th.cat(latent_state, dim=-1))
+        # print(self.vis_encoder(visual_obs).shape, agent_obs.shape)
+        return self.vector_encoder.forward(th.cat(latent_state, dim=-1))
+
+
+class OAIDoublePlayerFeatureExtractor(BaseFeaturesExtractor):
+    """
+        :param observation_space: (gym.Space)
+        :param features_dim: (int) Number of features extracted.
+            This corresponds to the number of unit for the last layer.
+        """
+    def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = 256):
+        super(OAIDoublePlayerFeatureExtractor, self).__init__(observation_space, features_dim)
+        self.use_visual_obs = np.prod(observation_space['visual_obs'].shape) > 0
+        self.use_vector_obs = np.prod(observation_space['agent_obs'].shape) > 0
+        if self.use_visual_obs:
+            self.vis_encoders = [GridEncoder(observation_space['visual_obs'].shape[1:]),
+                                 GridEncoder(observation_space['visual_obs'].shape[1:])]
+            test_shape = [1, *observation_space['visual_obs'].shape[1:]]
+            self.encoder_output_shape = get_output_shape(self.vis_encoders[0], test_shape)[0] * 2
+        else:
+            self.encoder_output_shape = 0
+
+        # Define MLP for vector/feature based observations
+        self.vector_encoder = MLP(input_dim=self.encoder_output_shape + np.prod(observation_space['agent_obs'].shape),
+                                  output_dim=features_dim)
+        self.apply(weights_init_)
+
+    def forward(self, observations: th.Tensor) -> th.Tensor:
+        visual_obs, agent_obs = observations['visual_obs'], observations['agent_obs']
+        latent_state = []
+        # Concatenate all input features before passing them to MLP
+        if self.use_visual_obs:
+            # Convert all grid-like observations to features using CNN
+            latent_state += [self.vis_encoders[i].forward(visual_obs[:, i]) for i in range(2)]
+        if self.use_vector_obs:
+            latent_state += [th.flatten(agent_obs[:, i], start_dim=1) for i in range(2)]
+        return self.vector_encoder.forward(th.cat(latent_state, dim=-1))

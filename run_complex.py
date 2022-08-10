@@ -43,7 +43,7 @@ one_counter_params = {
 
 
 class App:
-    """Class to run an Overcooked Gridworld game, leaving one of the players as fixed.
+    """Class to run an Overcooked Gridworld game, leaving one of the agents as fixed.
     Useful for debugging. Most of the code from http://pygametutorials.wikidot.com/tutorials-basic."""
 
     def __init__(self, env, agent, player_idx, slow_time):
@@ -53,7 +53,7 @@ class App:
         self.agent = agent
         self.agent_idx = player_idx
         self.slow_time = slow_time
-        print("Human player index:", player_idx)
+        print("Human agent index:", player_idx)
 
     def on_init(self):
         pygame.init()
@@ -167,7 +167,7 @@ if __name__ == "__main__":
     parser.add_argument("-t", "--type", dest="type",
                         help="type of run, (i.e. pbt, bc, ppo, etc)", required=True)
     parser.add_argument("-r", "--run_dir", dest="run",
-                        help="name of run dir in data/*_runs/", required=True)
+                        help="tag of run dir in data/*_runs/", required=True)
     parser.add_argument("-no_slowed", "--no_slowed_down", dest="slow",
                         help="Slow down time for human to simulate actual test time", action='store_false')
     parser.add_argument("-s", "--seed", dest="seed", required=False, default=0)

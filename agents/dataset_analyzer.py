@@ -15,7 +15,7 @@ print(f'Number of all trials: {len(main_trials)}')
 if layouts != 'all':
     main_trials = main_trials[main_trials['layout_name'].isin(layouts)]
 
-# Remove all transitions where both players noop-ed
+# Remove all transitions where both agents noop-ed
 noop_trials = main_trials[main_trials['joint_action'] != '[[0, 0], [0, 0]]']
 print(f'Number of {str(layouts)} trials without double noops: {len(noop_trials)}')
 # print(main_trials['layout_name'])

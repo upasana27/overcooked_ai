@@ -623,9 +623,9 @@ class TestMediumLevelActionManagerSimple(unittest.TestCase):
             state (OvercookedState): an overcooked state
             am (MediumLevelActionManager): the planer whose action manager will be tested
 
-        This function checks if all the mid-level actions make sense for each player state inside STATE
+        This function checks if all the mid-level actions make sense for each agent state inside STATE
         """
-        player_0, player_1 = state.players
+        player_0, player_1 = state.agents
 
         mla_0 = am.get_medium_level_actions(state, player_0)
         mla_1 = am.get_medium_level_actions(state, player_1)
@@ -637,10 +637,10 @@ class TestMediumLevelActionManagerSimple(unittest.TestCase):
             print(am.mdp.state_string(state))
 
         self.assertEqual(set(mla_0), set(expected_mla_0),
-                         "player 0's ml_action should be " + str(expected_mla_0) +
+                         "agent 0's ml_action should be " + str(expected_mla_0) +
                          " but get " + str(mla_0))
         self.assertEqual(set(mla_1), set(expected_mla_1),
-                         "player 0's ml_action should be " + str(expected_mla_1) +
+                         "agent 0's ml_action should be " + str(expected_mla_1) +
                          " but get " + str(mla_1))
 
 class TestScenarios(unittest.TestCase):

@@ -51,7 +51,7 @@ class OvercookedDataset(Dataset):
             self.grid_shape[1] = max(env.mdp.shape[1], self.grid_shape[1])
 
         print(f'Number of {str(layouts)} trials: {len(self.main_trials)}, max grid size: {self.grid_shape}')
-        # Remove all transitions where both players noop-ed
+        # Remove all transitions where both agents noop-ed
         self.main_trials = self.main_trials[self.main_trials['joint_action'] != '[[0, 0], [0, 0]]']
         print(f'Number of {str(layouts)} trials without double noops: {len(self.main_trials)}')
 
@@ -133,7 +133,7 @@ class OvercookedDataset(Dataset):
         interact_id = Action.ACTION_TO_INDEX[Action.INTERACT]
 
         def facing(layout, player):
-            '''Returns what object the player is facing'''
+            '''Returns what object the agent is facing'''
             x, y = np.array(player.position) + np.array(player.orientation)
             layout = [[t for t in row.strip("[]'")] for row in layout.split("', '")]
             return layout[y][x]
@@ -149,18 +149,18 @@ class OvercookedDataset(Dataset):
                 #     print(row)
                 # assert row['cur_gameloop'] == 0 # Ensure we are starting trial from the first timestep
                 subtask = 'unknown'
-                for i in range(len(row['state'].players)):
+                for i in range(len(row['state'].agents)):
                     self.main_trials.loc[subtask_start_idx[i]:index-1, f'p{i + 1}_curr_subtask'] = Subtasks.SUBTASKS_TO_IDS[subtask]
                     self.main_trials.loc[max(subtask_start_idx[i] - 1, trial_start_idx[i]):index-1, f'p{i + 1}_next_subtask'] = Subtasks.SUBTASKS_TO_IDS[subtask]
 
                 curr_trial = row['trial_id']
-                curr_objs = [(p.held_object.name if p.held_object else None) for p in row['state'].players]
+                curr_objs = [(p.held_object.name if p.held_object else None) for p in row['state'].agents]
                 subtask_start_idx = [index, index]
                 trial_start_idx = [index, index]
 
-            # For each player
-            for i in range(len(row['state'].players)):
-                curr_objs = [(p.held_object.name if p.held_object else None) for p in row['state'].players]
+            # For each agent
+            for i in range(len(row['state'].agents)):
+                curr_objs = [(p.held_object.name if p.held_object else None) for p in row['state'].agents]
                 try:
                     next_row = self.main_trials.loc[index + 1]
                 except KeyError:
@@ -172,8 +172,8 @@ class OvercookedDataset(Dataset):
 
                 # All subtasks will start and end with an INTERACT action
                 if row['joint_action'][i] == interact_id:
-                    next_objs = [(p.held_object.name if p.held_object else None) for p in next_row['state'].players]
-                    tile_in_front = facing(row['layout'], row['state'].players[i])
+                    next_objs = [(p.held_object.name if p.held_object else None) for p in next_row['state'].agents]
+                    tile_in_front = facing(row['layout'], row['state'].agents[i])
 
                     # Make sure the next row is part of the current
                     if next_row['trial_id'] != curr_trial:

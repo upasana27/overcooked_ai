@@ -16,8 +16,8 @@ def encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: t
           - Agent ID
           - Unmovable Terrain ID
           - Movable items ID
-          - Status ID 1 (for players, this is item held; for pots it is the number of onions / ready)
-          - Status ID 2 (for players, this is direction; for pots it is time remaining)
+          - Status ID 1 (for agents, this is item held; for pots it is the number of onions / ready)
+          - Status ID 2 (for agents, this is direction; for pots it is time remaining)
 
     Robot Observation -- 7 (8 opt.):
         - Player idx
@@ -29,7 +29,7 @@ def encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: t
         - Time remaining
         - (Optional) Urgency (if horizon - overcooked_state.timestep < 40)
         TODOs (Maybe)
-        - relative location to the other player
+        - relative location to the other agent
         - relative location to the closest onion
         - relative location to the closest dish
         - relative location to the closest soup

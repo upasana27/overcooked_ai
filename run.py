@@ -39,7 +39,7 @@ one_counter_params = {
 
 
 class App:
-    """Class to run an Overcooked Gridworld game, leaving one of the players as fixed.
+    """Class to run an Overcooked Gridworld game, leaving one of the agents as fixed.
     Useful for debugging. Most of the code from http://pygametutorials.wikidot.com/tutorials-basic."""
 
     def __init__(self, layout_name, slowmo_rate):
@@ -49,7 +49,7 @@ class App:
         self.env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(self.layout_name), horizon=1200)
         self.agent = None
         self.slowmo_rate = slowmo_rate
-        # print("Human player index:", p_idx)
+        # print("Human agent index:", p_idx)
         self.fps = 30 // slowmo_rate
         self.score = 0
         self.curr_tick = 0
@@ -127,10 +127,10 @@ class App:
             "layout" : json.dumps(self.env.mdp.terrain_mtx),
             "layout_name" : self.layout_name,
             "trial_id" : -1 # TODO this is just for testing self.trial_id,
-            # "player_0_id" : self.players[0],
-            # "player_1_id" : self.players[1],
-            # "player_0_is_human" : self.players[0] in self.human_players,
-            # "player_1_is_human" : self.players[1] in self.human_players
+            # "player_0_id" : self.agents[0],
+            # "player_1_id" : self.agents[1],
+            # "player_0_is_human" : self.agents[0] in self.human_players,
+            # "player_1_is_human" : self.agents[1] in self.human_players
         }
 
         self.trajectory.append(transition)
@@ -231,7 +231,7 @@ if __name__ == "__main__":
     # parser.add_argument("-t", "--type", dest="type",
     #                     help="type of run, (i.e. pbt, bc, ppo, etc)", required=True)
     # parser.add_argument("-r", "--run_dir", dest="run",
-    #                     help="name of run dir in data/*_runs/", required=True)
+    #                     help="tag of run dir in data/*_runs/", required=True)
     parser.add_argument("-no_slowed", "--no_slowed_down", dest="slow",
                         help="Slow down time for human to simulate actual test time", action='store_false')
     parser.add_argument("-s", "--seed", dest="seed", required=False, default=0)

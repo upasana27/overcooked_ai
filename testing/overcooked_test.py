@@ -347,7 +347,7 @@ class TestGridworld(unittest.TestCase):
                          [Action.ALL_ACTIONS, Action.ALL_ACTIONS])
 
     def test_from_dict(self):
-        state_dict = {"players": [{"position": [2, 1], "orientation": [0, -1], "held_object": None }, {"position": [1, 1], "orientation": [0, -1], "held_object": None }], "objects": [{"name": "onion", "position": [1, 0], "state": None }], "order_list": None }
+        state_dict = {"agents": [{"position": [2, 1], "orientation": [0, -1], "held_object": None }, {"position": [1, 1], "orientation": [0, -1], "held_object": None }], "objects": [{"tag": "onion", "position": [1, 0], "state": None }], "order_list": None }
         state = OvercookedState.from_dict(state_dict)
 
 
@@ -426,7 +426,7 @@ class TestGridworld(unittest.TestCase):
         try:
             OvercookedGridworld.from_layout_name("multiplayer_schelling")
         except AssertionError as e:
-            print("Loading > 2 player map failed with error:", e)
+            print("Loading > 2 agent map failed with error:", e)
 
     def test_potential_function(self):
         mp = MotionPlanner(self.base_mdp)
