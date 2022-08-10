@@ -5,12 +5,23 @@ from typing import Tuple, Union
 
 class OAIAgent(ABC):
     """
-    A subset of stable baselines Base algorithm:
+    A smaller version of stable baselines Base algorithm with some small changes for my new agents
     https://stable-baselines3.readthedocs.io/en/master/modules/base.html#stable_baselines3.common.base_class.BaseAlgorithm
-    For agents that aren't part of that library to play nicely with it
+    Ensures that all agents play nicely with the environment
     """
     def __init__(self):
         super(OAIAgent, self).__init__()
+        # Must define a policy. The policy must implement a get_distribution(obs) that returns the action distribution
+        self.policy = None
+
+    def set_player_idx(self, idx):
+        self.player_idx = idx
+
+    def step(self, state, joint_action):
+        pass
+
+    def reset(self):
+        pass
 
     @abstractmethod
     def predict(self, obs: th.Tensor) -> Tuple[int, Union[th.Tensor, None]]:
@@ -19,20 +30,20 @@ class OAIAgent(ABC):
         Structure should be the same as agents created using stable baselines:
         https://stable-baselines3.readthedocs.io/en/master/modules/base.html#stable_baselines3.common.base_class.BaseAlgorithm.predict
         """
-        pass
 
     @abstractmethod
     def save(self, path: str):
-        pass
+        """Save agent"""
 
     @abstractmethod
     def load(self, path: str):
-        pass
+        """Load agent"""
 
 
 class OAITrainer(ABC):
     """
-    An abstract base class for trainer classes. Trainer classes should have two agents used in training.
+    An abstract base class for trainer classes.
+    Trainer classes must have two agents that they can train using some paradigm
     """
     def __init__(self, args):
         super(OAITrainer, self).__init__()
@@ -45,16 +56,15 @@ class OAITrainer(ABC):
         Structure should be the same as agents created using stable baselines:
         https://stable-baselines3.readthedocs.io/en/master/modules/base.html#stable_baselines3.common.base_class.BaseAlgorithm.predict
         """
-        pass
 
     @abstractmethod
     def train_agents(self):
-        pass
+        """Run the training regime on agents"""
 
     @abstractmethod
     def save(self, path: Union[str, None]=None, tag: Union[str, None]=None):
-        pass
+        """Saves each agent that the trainer is training"""
 
     @abstractmethod
     def load(self, path: Union[str, None]=None, tag: Union[str, None]=None):
-        pass
+        """Loads each agent that the trainer is training"""

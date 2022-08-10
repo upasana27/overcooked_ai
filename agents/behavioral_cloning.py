@@ -24,7 +24,7 @@ import wandb
 NUM_ACTIONS = 6 # UP, DOWN, LEFT, RIGHT, INTERACT, NOOP
 
 
-class BehaviouralCloning(nn.Module, OAIAgent):
+class BehaviouralCloningPolicy(nn.Module):
     def __init__(self, device, visual_obs_shape, agent_obs_shape, args, act=nn.ReLU, hidden_dim=256):
         """
         NN network for a behavioral cloning agent
@@ -34,18 +34,15 @@ class BehaviouralCloning(nn.Module, OAIAgent):
         :param act: activation function
         :param hidden_dim: hidden dimension to use in NNs
         """
-        super(BehaviouralCloning, self).__init__()
+        super(BehaviouralCloningPolicy, self).__init__()
         self.device = device
-        self.act = act
-        self.hidden_dim = hidden_dim
+        # NOTE The policy only uses subtasks as an input. Policies only output actions
+        self.use_subtasks = args.use_subtasks
         self.use_visual_obs = np.prod(visual_obs_shape) > 0
         assert len(agent_obs_shape) == 1
         self.use_agent_obs = np.prod(agent_obs_shape) > 0
-        self.subtasks_obs_size = Subtasks.NUM_SUBTASKS if cond_subtasks else 0
-        self.use_subtasks = args.use_subtasks
-        if self.use_subtasks:
-            unknown_task_id = th.tensor(Subtasks.SUBTASKS_TO_IDS['unknown']).to(self.device)
-            self.curr_subtask = F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS)
+        self.subtasks_obs_size = Subtasks.NUM_SUBTASKS if self.use_subtasks else 0
+
         # Define CNN for grid-like observations
         if self.use_visual_obs:
             self.cnn = GridEncoder(visual_obs_shape)
@@ -55,52 +52,66 @@ class BehaviouralCloning(nn.Module, OAIAgent):
 
         # Define MLP for vector/feature based observations
         self.mlp = MLP(input_dim=self.cnn_output_shape + agent_obs_shape[0] + self.subtasks_obs_size,
-                       output_dim=self.hidden_dim, hidden_dim=self.hidden_dim)
-        self.action_predictor = nn.Linear(self.hidden_dim, NUM_ACTIONS)
-        if self.use_subtasks:
-            self.subtask_predictor = nn.Linear(self.hidden_dim, Subtasks.NUM_SUBTASKS)
-            # Predicted subtask to perform next, stars as unknown
-            unknown_task_id = th.tensor(Subtasks.SUBTASKS_TO_IDS['unknown']).to(self.device)
-            self.curr_subtask = F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS)
+                       output_dim=hidden_dim, hidden_dim=hidden_dim, act=act)
+        self.action_predictor = nn.Linear(hidden_dim, NUM_ACTIONS)
+
         self.apply(weights_init_)
         self.to(self.device)
 
-    def forward(self, obs):
-        visual_obs, agent_obs, subtask = obs
-        latent_state = []
+    def get_latent_feats(self, obs):
+        mlp_input = []
         # Concatenate all input features before passing them to MLP
         if self.use_visual_obs:
-            # Convert all grid-like observations to features using CNN
-            latent_state.append(self.cnn(visual_obs))
+            mlp_input.append(self.cnn.forward(obs[0]))
         if self.use_agent_obs:
-            latent_state.append(agent_obs)
+            mlp_input.append(obs[1])
         if self.use_subtasks:
-            latent_state.append(subtask.to(self.device))
-        latent_feats = self.mlp(th.cat(latent_state, dim=-1))
-        action_logits = self.action_predictor(latent_feats)
-        return (action_logits, self.subtask_predictor(latent_feats)) if self.use_subtasks else action_logits
+            mlp_input.append(obs[2])
+        return self.mlp.forward(th.cat(mlp_input, dim=-1))
 
-    def select_action(self, obs, sample=True):
-        """Select action. If sample is True, sample action from distribution, else pick best scoring action"""
-        logits = self.forward([o.unsqueeze(dim=0).to(self.device) for o in obs]) # th.tensor(o, device=self.device).unsqueeze(dim=0)
-        if self.use_subtasks:
-            return (Categorical(logits=logits[0]).sample() if sample else th.argmax(logits[0], dim=-1)), logits[1]
-        else:
-            return Categorical(logits=logits).sample() if sample else th.argmax(logits, dim=-1)
+    def forward(self, obs):
+        return self.action_predictor(self.get_latent_feats(obs))
 
     def predict(self, obs, sample=True):
-        obs = (*obs, self.curr_subtask)
-        preds = self.select_action(obs, sample=sample)
+        """Predict action. If sample is True, sample action from distribution, else pick best scoring action"""
+        return Categorical(logits=self.forward(obs)).sample() if sample else th.argmax(self.forward(obs), dim=-1), None
+
+    def get_distribution(self, obs):
+        return Categorical(logits=self.forward(obs))
+
+
+
+class BehaviouralCloningAgent(nn.Module, OAIAgent):
+    def __init__(self, device, visual_obs_shape, agent_obs_shape, args):
+        super(BehaviouralCloningAgent, self).__init__()
+        self.device = device
+        self.use_subtasks = args.use_subtasks
+        self.policy = BehaviouralCloningPolicy(device, visual_obs_shape, agent_obs_shape, args)
         if self.use_subtasks:
-            action = preds[0]
+            self.subtask_predictor = nn.Linear(hidden_dim, Subtasks.NUM_SUBTASKS)
+            self.apply(weights_init_)
+            self.to(self.device)
+            self.reset()
+
+    def forward(self, obs):
+        z = self.policy.get_latent_feats(obs)
+        action_logits = self.policy.action_predictor(z)
+        return (action_logits, self.subtask_predictor(z)) if self.use_subtasks else action_logits
+
+    def predict(self, obs, sample=True):
+        obs = (*obs, self.curr_subtask) if self.use_subtasks else obs
+        obs = [o.unsqueeze(dim=0).to(self.device) for o in obs]
+        logits = self.forward(obs)
+        if self.use_subtasks:
+            action_logits, subtask_logits = logits
             # Update predicted subtask
             if Action.INDEX_TO_ACTION[action] == Action.INTERACT:
-                ps = th.zeros_like(preds[1].squeeze())
-                ps[th.argmax(preds[1].detach().squeeze(), dim=-1)] = 1
+                ps = th.zeros_like(subtask_logits.squeeze())
+                ps[th.argmax(subtask_logits.detach().squeeze(), dim=-1)] = 1
                 self.curr_subtask = ps.float()
         else:
-            action = preds
-        return action, None
+            action_logits = logits
+        return Categorical(logits=action_logits).sample() if sample else th.argmax(action_logits, dim=-1)
 
     def reset(self):
         # Predicted subtask to perform next, stars as unknown
@@ -108,11 +119,13 @@ class BehaviouralCloning(nn.Module, OAIAgent):
         self.curr_subtask = F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS)
 
     def save(self, path):
-        th.save(self.state_dict(), path)
+        th.save(self.policy.state_dict(), path + '_policy')
+        th.save(self.state_dict(), path + '_subtask_layer')
 
     def load(self, path):
-        self.load_state_dict(th.load(path, map_location=self.device))
-        self.reset()
+        self.policy.load_state_dict(th.load(path + '_policy', map_location=self.device))
+        self.load_state_dict(th.load(path + '_subtask_layer', map_location=self.device))
+        self.policy.reset()
 
 class BC_trainer(OAITrainer):
     def __init__(self, encoding_fn, train_layouts, test_layout, args, vis_eval=False):
@@ -140,8 +153,8 @@ class BC_trainer(OAITrainer):
         visual_obs_shape = obs['visual_obs'][0].shape
         agent_obs_shape = obs['agent_obs'][0].shape
         self.agents = (
-            BehaviouralCloning(self.device, visual_obs_shape, agent_obs_shape, args),
-            BehaviouralCloning(self.device, visual_obs_shape, agent_obs_shape, args)
+            BehaviouralCloningAgent(self.device, visual_obs_shape, agent_obs_shape, args),
+            BehaviouralCloningAgent(self.device, visual_obs_shape, agent_obs_shape, args)
         )
 
         if len(train_layouts) > 0:

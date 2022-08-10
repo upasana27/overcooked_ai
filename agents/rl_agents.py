@@ -8,6 +8,26 @@ from overcooked_gym_env import OvercookedGymEnv
 from state_encodings import encode_state, OAI_RL_encode_state
 
 
+class SingleAgentWrapper(OAIAgent):
+    def __init__(self, agent, idx):
+        """
+        double_agent must be a stable baselines stable_baselines3.common.base_class.BaseAlgorithm that outputs
+        an action for each agent
+        """
+        super(SingleAgentWrapper, self).__init__()
+        self.agent = agent
+        self.set_player_idx(idx)
+
+    def predict(self, obs):
+        return self.agent.predict(obs)
+
+    def save(self, path):
+        print('In the future, please save the agent using TwoSingleAgentsTrainer.save')
+        self.agent.save(path + f'_p{self.player_idx + 1}')
+
+    def load(self, path):
+        print('In the future, please load the agent using TwoSingleAgentsTrainer.load')
+        self.agent.load(path + f'_p{self.player_idx + 1}')
 
 class TwoSingleAgentsTrainer(OAITrainer):
     def __init__(self, args):
@@ -55,27 +75,27 @@ class TwoSingleAgentsTrainer(OAITrainer):
             self.agents[i].load(path / tag + f'_p{i + 1}')
 
 
-class DoubleAgentWrapperForSinglePlayerMode(OAIAgent):
-    def __init__(self, double_agent, idx, args):
+class DoubleAgentWrapper(OAIAgent):
+    def __init__(self, double_agent, idx):
         """
         double_agent must be a stable baselines stable_baselines3.common.base_class.BaseAlgorithm that outputs
         an action for each agent
         """
-        super(DoubleAgentWrapperForSinglePlayerMode, self).__init__(args)
+        super(DoubleAgentWrapper, self).__init__()
         self.double_agent = double_agent
-        self.idx = idx
+        self.set_player_idx(idx)
 
     def predict(self, obs):
         action, state = self.double_agent.predict(obs)
         return action[self.idx], state
 
     def save(self, path):
-        print('In the future, please save the double agent trainer directly instead of this wrapper')
-        self.double_agent.save()
+        print('In the future, please save the agent using OneDoubleAgentTrainer.save')
+        self.double_agent.save(path + f'_p{self.player_idx + 1}')
 
     def load(self, path):
-        print('In the future, please load the double agent trainer directly instead of this wrapper')
-        self.double_agent.load()
+        print('In the future, please load the agent using OneDoubleAgentTrainer.load')
+        self.double_agent.load(path + f'_p{self.player_idx + 1}')
 
 class OneDoubleAgentTrainer(OAITrainer):
     def __init__(self, args):
@@ -111,7 +131,7 @@ class OneDoubleAgentTrainer(OAITrainer):
         return total_reward
 
     def get_agent(self, idx):
-        return DoubleAgentWrapperForSinglePlayerMode(self, idx, args)
+        return DoubleAgentWrapper(self, idx)
 
     def save(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'RL_double_agent'
