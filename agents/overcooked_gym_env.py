@@ -1,3 +1,4 @@
+from state_encodings import ENCODING_SCHEMES
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedState, OvercookedGridworld, Direction, Action
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
@@ -18,7 +19,7 @@ class OvercookedGymEnv(Env):
         self.agents = [p1_agent, p2_agent]
         self.layout = layout
         self.env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(layout), horizon=args.horizon)
-        self.encoding_fn = encoding_fn
+        self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.visualization_enabled = False
         self.grid_shape = grid_shape or self.env.mdp.shape
         self.shape_rewards = shape_rewards
@@ -40,7 +41,6 @@ class OvercookedGymEnv(Env):
                 "visual_obs": spaces.Box(0, 20, obs['visual_obs'].shape, dtype=np.int),
                 "agent_obs":  spaces.Box(0, self.args.horizon, obs['agent_obs'].shape, dtype=np.float32)
             })
-
         else:  # We control both agents
             self.p_idx = None
             self.action_space = spaces.MultiDiscrete([ len(Action.ALL_ACTIONS), len(Action.ALL_ACTIONS) ])
@@ -138,7 +138,7 @@ if __name__ == '__main__':
     from state_encodings import encode_state
     from arguments import get_arguments
     args = get_arguments()
-    env = OvercookedGymEnv(p1_agent=DummyAgent(), layout='asymmetric_advantages', encoding_fn=encode_state, args=args) #make('overcooked_ai.agents:OvercookedGymEnv-v0', layout='asymmetric_advantages', encoding_fn=encode_state, args=args)
+    env = OvercookedGymEnv(p1_agent=DummyAgent(), layout='asymmetric_advantages', args=args) #make('overcooked_ai.agents:OvercookedGymEnv-v0', layout='asymmetric_advantages', encoding_fn=encode_state, args=args)
     print(check_env(env))
     env.setup_visualization()
     env.reset()

@@ -1,5 +1,6 @@
 from arguments import get_arguments
 from state_encodings import ENCODING_SCHEMES
+from subtasks import Subtasks, calculate_completed_subtask
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedState, OvercookedGridworld, Direction, Action
 from overcooked_ai_py.planning.planners import MediumLevelActionManager, NO_COUNTERS_PARAMS
@@ -14,19 +15,11 @@ import pickle
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
-class Subtasks:
-    SUBTASKS = ['get_onion_from_dispenser', 'get_onion_from_counter', 'put_onion_in_pot', 'put_onion_closer',
-                'get_plate_from_dish_rack', 'get_plate_from_counter', 'put_plate_closer', 'get_soup',
-                'get_soup_from_counter', 'put_soup_closer', 'serve_soup', 'unknown']
-    NUM_SUBTASKS = len(SUBTASKS)
-    SUBTASKS_TO_IDS = {s: i for i, s in enumerate(SUBTASKS)}
-    IDS_TO_SUBTASKS = {v: k for k, v in SUBTASKS_TO_IDS.items()}
-
 
 class OvercookedDataset(Dataset):
     def __init__(self, encoding_fn, layouts, args, add_subtask_info=True):
         self.add_subtask_info = add_subtask_info
-        self.encode_state_fn = encoding_fn
+        self.encoding_fn = encoding_fn
         self.data_path = args.base_dir / args.data_path / args.dataset
         self.main_trials = pd.read_pickle(self.data_path)
         if args.dataset == '2019_hh_trials_all.pickle':
@@ -86,7 +79,7 @@ class OvercookedDataset(Dataset):
                 state = json.loads(state)
             state = OvercookedState.from_dict(state)
             env = self.layout_to_env[df['layout_name']]
-            obs = self.encode_state_fn(env.mdp, state, self.grid_shape, args.horizon)
+            obs = self.encoding_fn(env.mdp, state, self.grid_shape, args.horizon)
             df['state'] = state
             df['visual_obs'] = obs['visual_obs']
             df['agent_obs'] = obs['agent_obs']
@@ -113,158 +106,77 @@ class OvercookedDataset(Dataset):
     def __len__(self):
         return len(self.main_trials)
 
-    def __getitem__(self, item):
-        data_point = self.main_trials.iloc[item]
-        a = {
+    def __getitem__(self, idx):
+        data_point = self.main_trials.iloc[idx]
+        return {
             'visual_obs': data_point['visual_obs'],
             'agent_obs': data_point['agent_obs'],
             'joint_action': data_point['joint_action'],
             'subtasks': np.array( [[data_point['p1_curr_subtask'], data_point['p2_curr_subtask']],
                                    [data_point['p1_next_subtask'], data_point['p2_next_subtask']]])
         }
-        return a
 
     def add_subtasks(self):
-        prev_trials = []
         curr_trial = None
-        curr_objs = None
         subtask_start_idx = [0, 0]
         trial_start_idx = [0, 0]
         interact_id = Action.ACTION_TO_INDEX[Action.INTERACT]
 
-        def facing(layout, player):
-            '''Returns what object the agent is facing'''
-            x, y = np.array(player.position) + np.array(player.orientation)
-            layout = [[t for t in row.strip("[]'")] for row in layout.split("', '")]
-            return layout[y][x]
-
+        # Add columns in dataframe
         self.main_trials['p1_curr_subtask'] = None
         self.main_trials['p2_curr_subtask'] = None
         self.main_trials['p1_next_subtask'] = None
         self.main_trials['p2_next_subtask'] = None
+
+        # Iterate over all row
         for index, row in tqdm(self.main_trials.iterrows()):
             if row['trial_id'] != curr_trial:
-                # Start of a new trial
-                # if row['cur_gameloop'] != 0:
-                #     print(row)
-                # assert row['cur_gameloop'] == 0 # Ensure we are starting trial from the first timestep
-                subtask = 'unknown'
-                for i in range(len(row['state'].agents)):
-                    self.main_trials.loc[subtask_start_idx[i]:index-1, f'p{i + 1}_curr_subtask'] = Subtasks.SUBTASKS_TO_IDS[subtask]
-                    self.main_trials.loc[max(subtask_start_idx[i] - 1, trial_start_idx[i]):index-1, f'p{i + 1}_next_subtask'] = Subtasks.SUBTASKS_TO_IDS[subtask]
-
+                # Start of a new trial, label final actions of previous trial with unknown subtask
+                subtask = Subtasks.SUBTASKS_TO_IDS['unknown']
+                for i in range(len(row['state'].players)):
+                    self.main_trials.loc[subtask_start_idx[i]:index-1, f'p{i + 1}_curr_subtask'] = subtask
+                    start_idx = max(subtask_start_idx[i] - 1, trial_start_idx[i])
+                    self.main_trials.loc[start_idx:index-1, f'p{i + 1}_next_subtask'] = subtask
                 curr_trial = row['trial_id']
-                curr_objs = [(p.held_object.name if p.held_object else None) for p in row['state'].agents]
+                # Store starting index of next subtask
                 subtask_start_idx = [index, index]
                 trial_start_idx = [index, index]
 
             # For each agent
-            for i in range(len(row['state'].agents)):
-                curr_objs = [(p.held_object.name if p.held_object else None) for p in row['state'].agents]
-                try:
+            for i in range(len(row['state'].players)):
+                try: # Get next row
                     next_row = self.main_trials.loc[index + 1]
-                except KeyError:
-                    subtask = 'unknown'
-                    self.main_trials.loc[subtask_start_idx[i]:index, f'p{i + 1}_curr_subtask'] = Subtasks.SUBTASKS_TO_IDS[subtask]
-                    self.main_trials.loc[subtask_start_idx[i]-1:index, f'p{i + 1}_next_subtask'] = Subtasks.SUBTASKS_TO_IDS[subtask]
+                except KeyError: # End of file, label last actions with 'unknown'
+                    subtask = Subtasks.SUBTASKS_TO_IDS['unknown']
+                    self.main_trials.loc[subtask_start_idx[i]:index, f'p{i + 1}_curr_subtask'] = subtask
+                    self.main_trials.loc[subtask_start_idx[i]-1:index, f'p{i + 1}_next_subtask'] = subtask
                     subtask_start_idx[i] = index + 1
                     continue
 
                 # All subtasks will start and end with an INTERACT action
                 if row['joint_action'][i] == interact_id:
-                    next_objs = [(p.held_object.name if p.held_object else None) for p in next_row['state'].agents]
-                    tile_in_front = facing(row['layout'], row['state'].agents[i])
-
-                    # Make sure the next row is part of the current
+                    # Make sure the next row is part of the current trial
                     if next_row['trial_id'] != curr_trial:
-                        subtask = 'unknown'
-                    # Object held didn't change -- This interaction didn't actually transition to a new subtask
-                    elif curr_objs[i] == next_objs[i]:
-                        break
-                    # Pick up an onion
-                    elif curr_objs[i] is None and next_objs[i] == 'onion':
-                        # Facing an onion dispenser
-                        if tile_in_front == 'O':
-                            subtask = 'get_onion_from_dispenser'
-                        # Facing a counter
-                        elif tile_in_front == 'X':
-                            subtask = 'get_onion_from_counter'
-                        else:
-                            raise ValueError(
-                                f'Unexpected transition. {curr_objs[i]} -> {next_objs[i]} while facing {tile_in_front}')
-                    # Place an onion
-                    elif curr_objs[i] == 'onion' and next_objs[i] is None:
-                        # Facing a pot
-                        if tile_in_front == 'P':
-                            subtask = 'put_onion_in_pot'
-                        # Facing a counter
-                        elif tile_in_front == 'X':
-                            subtask = 'put_onion_closer'
-                        else:
-                            raise ValueError(
-                                f'Unexpected transition. {curr_objs[i]} -> {next_objs[i]} while facing {tile_in_front}')
-                    # Pick up a dish
-                    elif curr_objs[i] is None and next_objs[i] == 'dish':
-                        # Facing a dish dispenser
-                        if tile_in_front == 'D':
-                            subtask = 'get_plate_from_dish_rack'
-                        # Facing a counter
-                        elif tile_in_front == 'X':
-                            subtask = 'get_plate_from_counter'
-                        else:
-                            raise ValueError(
-                                f'Unexpected transition. {curr_objs[i]} -> {next_objs[i]} while facing {tile_in_front}')
-                    # Place a dish
-                    elif curr_objs[i] == 'dish' and next_objs[i] is None:
-                        # Facing a counter
-                        if tile_in_front == 'X':
-                            subtask = 'put_plate_closer'
-                        else:
-                            raise ValueError(
-                                f'Unexpected transition. {curr_objs[i]} -> {next_objs[i]} while facing {tile_in_front}')
-                    # Pick up soup from pot using plate
-                    elif curr_objs[i] == 'dish' and next_objs[i] == 'soup':
-                        # Facing a counter
-                        if tile_in_front == 'P':
-                            subtask = 'get_soup'
-                        else:
-                            raise ValueError(
-                                f'Unexpected transition. {curr_objs[i]} -> {next_objs[i]} while facing {tile_in_front}')
-                    # Pick up soup from counter
-                    elif curr_objs[i] is None and next_objs[i] == 'soup':
-                        # Facing a counter
-                        if tile_in_front == 'X':
-                            subtask = 'get_soup_from_counter'
-                        else:
-                            raise ValueError(
-                                f'Unexpected transition. {curr_objs[i]} -> {next_objs[i]} while facing {tile_in_front}')
-                    # Place soup
-                    elif curr_objs[i] == 'soup' and next_objs[i] is None:
-                        # Facing a service station
-                        if tile_in_front == 'S':
-                            subtask = 'serve_soup'
-                        # Facing a counter
-                        elif tile_in_front == 'X':
-                            subtask = 'put_soup_closer'
-                        else:
-                            raise ValueError(
-                                f'Unexpected transition. {curr_objs[i]} -> {next_objs[i]} while facing {tile_in_front}')
+                        subtask = Subtasks.SUBTASKS_TO_IDS['unknown']
                     else:
-                        raise ValueError(
-                            f'Unexpected transition. {curr_objs[i]} -> {next_objs[i]}.')
+                        # Find out which subtask has been completed
+                        subtask = calculate_completed_subtask(row['layout'], row['state'], next_row['state'], i)
+                        if subtask is None:
+                            continue # No completed subtask, continue to next payer
 
-                    self.main_trials.loc[subtask_start_idx[i]:index, f'p{i + 1}_curr_subtask'] = \
-                        Subtasks.SUBTASKS_TO_IDS[subtask]
-                    self.main_trials.loc[max(trial_start_idx[i], subtask_start_idx[i]-1):index-1, f'p{i + 1}_next_subtask'] = \
-                        Subtasks.SUBTASKS_TO_IDS[subtask]
+                    # Label previous actions with subtask
+                    self.main_trials.loc[subtask_start_idx[i]:index, f'p{i + 1}_curr_subtask'] = subtask
+                    start_idx = max(trial_start_idx[i], subtask_start_idx[i]-1)
+                    self.main_trials.loc[start_idx:index-1, f'p{i + 1}_next_subtask'] = subtask
                     subtask_start_idx[i] = index + 1
 
-        # print(self.main_trials[self.main_trials['p1_curr_subtask'] is None])
+        # Make sure that this data is defined everywhere
         assert not (self.main_trials['p1_curr_subtask'].isna().any())
         assert not (self.main_trials['p2_curr_subtask'].isna().any())
         assert not (self.main_trials['p1_next_subtask'].isna().any())
         assert not (self.main_trials['p2_next_subtask'].isna().any())
 
+        # Calculate subtask ratios to be used as weights in a cross entropy loss
         self.subtask_weights = np.zeros(Subtasks.NUM_SUBTASKS)
         for i in range(2):
             counts = self.main_trials[f'p{i+1}_next_subtask'].value_counts().to_dict()
@@ -276,12 +188,11 @@ class OvercookedDataset(Dataset):
         self.subtask_weights = Subtasks.NUM_SUBTASKS * self.subtask_weights / self.subtask_weights.sum()
 
 
-
 def main():
     args = get_arguments()
-    env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(args.layout), horizon=400)
+    env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(args.layout_name), horizon=400)
     encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
-    OD = OvercookedDataset(env, encoding_fn, args)
+    OD = OvercookedDataset(encoding_fn, [args.layout_name], args) #OvercookedDataset(env, encoding_fn, args)
 
     dataloader = DataLoader(OD, batch_size=1, shuffle=True, num_workers=0)
     for batch in dataloader:

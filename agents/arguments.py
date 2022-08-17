@@ -8,7 +8,7 @@ def get_arguments():
     :return:
     """
     parser = argparse.ArgumentParser(description='PyTorch Soft Actor-Critic Args')
-    parser.add_argument('--layout', default='asymmetric_advantages',  help='Overcooked map to use')
+    parser.add_argument('--layout-name', default='asymmetric_advantages',  help='Overcooked map to use')
     parser.add_argument('--subtasks', action='store_true', help='Condition IL agents on subtasks (default: False)')
     parser.add_argument('--horizon', type=int, default=400, help='Max timesteps in a rollout')
     parser.add_argument('--encoding-fn', type=str, default='dense_lossless',

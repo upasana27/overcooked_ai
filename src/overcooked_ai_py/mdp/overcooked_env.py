@@ -527,7 +527,7 @@ class Overcooked(gym.Env):
         if baselines_reproducible:
             # NOTE:
             # This will cause all agent indices to be chosen in sync across simulation 
-            # envs (for each update, all envs will have index 0 or index 1).
+            # env (for each update, all env will have index 0 or index 1).
             # This is to prevent the randomness of choosing agent indexes
             # from leaking when using subprocess-vec-env in baselines (which
             # seeding does not reach) i.e. having different results for different

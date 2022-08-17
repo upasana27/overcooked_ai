@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import torch as th
 from typing import Tuple, Union
-
+import stable_baselines3.common.distributions as sb3_distributions
 
 class OAIAgent(ABC):
     """
@@ -20,11 +20,19 @@ class OAIAgent(ABC):
     def step(self, state, joint_action):
         pass
 
-    def reset(self):
-        pass
+    def reset(self, state, player_idx: int):
+        self.set_player_idx(player_idx)
 
     @abstractmethod
     def predict(self, obs: th.Tensor) -> Tuple[int, Union[th.Tensor, None]]:
+        """
+        Given an observation return the index of the action and the agent state if the agent is recurrent.
+        Structure should be the same as agents created using stable baselines:
+        https://stable-baselines3.readthedocs.io/en/master/modules/base.html#stable_baselines3.common.base_class.BaseAlgorithm.predict
+        """
+
+    @abstractmethod
+    def get_distribution(self, obs: th.Tensor) -> Union[th.distributions.Distribution, sb3_distributions.Distribution]:
         """
         Given an observation return the index of the action and the agent state if the agent is recurrent.
         Structure should be the same as agents created using stable baselines:

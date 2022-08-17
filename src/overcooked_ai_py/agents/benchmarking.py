@@ -39,7 +39,7 @@ class AgentEvaluator(object):
     def from_mdp_params_infinite(mdp_params, env_params, outer_shape=None, mdp_params_schedule_fn=None, force_compute=False,
                         mlam_params=NO_COUNTERS_PARAMS, debug=False):
         """
-        mdp_params (dict): params for creation of an OvercookedGridworld instance through the `from_layout_name` method
+        mdp_params (dict): params for creation of an OvercookedGridworld instance through the `from_.players` method
         outer_shape: the outer shape of environment
         mdp_params_schedule_fn: the schedule for varying mdp params
         Information for the rest of params please refer to the __init__ method above
@@ -56,7 +56,7 @@ class AgentEvaluator(object):
     def from_mdp_params_finite(mdp_params, env_params, outer_shape=None, mdp_params_schedule_fn=None, force_compute=False,
                         mlam_params=NO_COUNTERS_PARAMS, debug=False):
         """
-        mdp_params (dict): params for creation of an OvercookedGridworld instance through the `from_layout_name` method
+        mdp_params (dict): params for creation of an OvercookedGridworld instance through the `from_.players` method
         outer_shape: the outer shape of environment
         mdp_params_schedule_fn: the schedule for varying mdp params
         Information for the rest of params please refer to the __init__ method above

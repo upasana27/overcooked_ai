@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 from torch.distributions.categorical import Categorical
 import wandb
 
-NUM_ACTIONS = 6 # UP, DOWN, LEFT, RIGHT, INTERACT, NOOP
+NUM_ACTIONS = 6  # UP, DOWN, LEFT, RIGHT, INTERACT, NOOP
 
 
 class BehaviouralCloningPolicy(nn.Module):
@@ -80,7 +80,6 @@ class BehaviouralCloningPolicy(nn.Module):
         return Categorical(logits=self.forward(obs))
 
 
-
 class BehaviouralCloningAgent(nn.Module, OAIAgent):
     def __init__(self, device, visual_obs_shape, agent_obs_shape, args):
         super(BehaviouralCloningAgent, self).__init__()
@@ -91,7 +90,6 @@ class BehaviouralCloningAgent(nn.Module, OAIAgent):
             self.subtask_predictor = nn.Linear(hidden_dim, Subtasks.NUM_SUBTASKS)
             self.apply(weights_init_)
             self.to(self.device)
-            self.reset()
 
     def forward(self, obs):
         z = self.policy.get_latent_feats(obs)
@@ -111,9 +109,16 @@ class BehaviouralCloningAgent(nn.Module, OAIAgent):
                 self.curr_subtask = ps.float()
         else:
             action_logits = logits
-        return Categorical(logits=action_logits).sample() if sample else th.argmax(action_logits, dim=-1)
+        action = Categorical(logits=action_logits).sample() if sample else th.argmax(action_logits, dim=-1)
+        return action, None
 
-    def reset(self):
+    def get_distribution(self, obs: th.Tensor):
+        obs = (*obs, self.curr_subtask) if self.use_subtasks else obs
+        obs = [o.unsqueeze(dim=0).to(self.device) for o in obs]
+        return self.policy.get_distribution(obs)
+
+    def reset(self, state, player_idx):
+        self.set_player_idx(player_idx)
         # Predicted subtask to perform next, stars as unknown
         unknown_task_id = th.tensor(Subtasks.SUBTASKS_TO_IDS['unknown']).to(self.device)
         self.curr_subtask = F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS)
@@ -127,28 +132,28 @@ class BehaviouralCloningAgent(nn.Module, OAIAgent):
         self.load_state_dict(th.load(path + '_subtask_layer', map_location=self.device))
         self.policy.reset()
 
-class BC_trainer(OAITrainer):
-    def __init__(self, encoding_fn, train_layouts, test_layout, args, vis_eval=False):
+
+class BehavioralCloningTrainer(OAITrainer):
+    def __init__(self, args, vis_eval=False):
         """
         Class to train BC agent
         :param env: Overcooked environment to use
-        :param encoding_fn: A callable function to encode an Overcooked state into a combination of visual and agent obs
-                            that can be fed into a NN
         :param dataset: That dataset to train on - can be None if the only visualizing agetns
         :param args: arguments to use
         :param vis_eval: If true, the evaluate function will visualize the agents
         """
-        super(BC_trainer, self).__init__(args)
+        super(BehavioralCloningTrainer, self).__init__(args)
         self.device = th.device('cuda' if th.cuda.is_available() else 'cpu')
         self.num_players = 2
-        self.encode_state_fn = encoding_fn
+        self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.visualize_evaluation = vis_eval
         self.use_subtasks = args.subtasks
-        self.train_layouts = train_layouts
-        self.test_layout = test_layout
+        self.train_layouts = [args.layout_name]
+        self.test_layout = args.layout_name
         self.train_dataset = OvercookedDataset(encoding_fn, self.train_layouts, args)
         self.grid_shape = self.train_dataset.grid_shape
-        self.eval_env = OvercookedGymEnv(layout=test_layout, encoding_fn=encoding_fn, grid_shape=self.grid_shape, args=args)
+        self.eval_env = OvercookedGymEnv(layout=test_layout, encoding_fn=encoding_fn, grid_shape=self.grid_shape,
+                                         args=args)
         obs = self.eval_env.get_obs()
         visual_obs_shape = obs['visual_obs'][0].shape
         agent_obs_shape = obs['agent_obs'][0].shape
@@ -162,7 +167,8 @@ class BC_trainer(OAITrainer):
             action_weights = th.tensor(self.train_dataset.get_action_weights(), dtype=th.float32, device=self.device)
             self.action_criterion = nn.CrossEntropyLoss(weight=action_weights)
             if self.use_subtasks:
-                subtask_weights = th.tensor(self.train_dataset.get_subtask_weights(), dtype=th.float32, device=self.device)
+                subtask_weights = th.tensor(self.train_dataset.get_subtask_weights(), dtype=th.float32,
+                                            device=self.device)
                 self.subtask_criterion = nn.CrossEntropyLoss(weight=subtask_weights, reduction='none')
         if self.visualize_evaluation:
             self.eval_env.setup_visualization()
@@ -211,7 +217,7 @@ class BC_trainer(OAITrainer):
     def train_on_batch(self, batch):
         """Train BC agent on a batch of data"""
         # print({k: v for k,v in batch.items()})
-        batch = {k: v.to(self.device) for k,v in batch.items()}
+        batch = {k: v.to(self.device) for k, v in batch.items()}
         vo, ao, action, subtasks = batch['visual_obs'].float(), batch['agent_obs'].float(), \
                                    batch['joint_action'].long(), batch['subtasks'].long()
 
@@ -219,14 +225,14 @@ class BC_trainer(OAITrainer):
         metrics = {}
         for i in range(self.num_players):
             self.optimizers[i].zero_grad()
-            cs_i = F.one_hot(curr_subtask[:,i], num_classes=Subtasks.NUM_SUBTASKS)
+            cs_i = F.one_hot(curr_subtask[:, i], num_classes=Subtasks.NUM_SUBTASKS)
             preds = self.agents[i].forward((vo[:, i], ao[:, i], cs_i))
             tot_loss = 0
             if self.use_subtasks:
                 # Train on subtask prediction task
                 pred_action, pred_subtask = preds
                 subtask_loss = self.subtask_criterion(pred_subtask, next_subtask[:, i])
-                subtask_mask = action[:,i] == Action.ACTION_TO_INDEX[Action.INTERACT]
+                subtask_mask = action[:, i] == Action.ACTION_TO_INDEX[Action.INTERACT]
                 loss_mask = th.logical_or(subtask_mask, th.rand_like(subtask_loss, device=self.device) > 0.95)
                 subtask_loss = th.mean(subtask_loss * loss_mask)
                 tot_loss += th.mean(subtask_loss)
@@ -262,9 +268,11 @@ class BC_trainer(OAITrainer):
         metrics['total_loss'] = sum([v for k, v in metrics.items() if 'loss' in k])
         return metrics
 
-    def training(self, exp_name, num_epochs=100):
+    def train_agents(self, epochs=100, exp_name=None):
         """ Training routine """
-        run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(args.base_dir / 'wandb'), reinit=True, name=exp_name)#, mode='disabled')
+        exp_name = exp_name or args.exp_name
+        run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(args.base_dir / 'wandb'),
+                         reinit=True, name=exp_name)  # , mode='disabled')
         best_loss = float('inf')
         best_reward = 0
         for epoch in range(num_epochs):
@@ -281,6 +289,9 @@ class BC_trainer(OAITrainer):
                 best_reward = mean_reward
         run.finish()
 
+    def get_agent(self, idx):
+        return self.agents[idx]
+
     def save(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'IL_agents'
         tag = tag or self.args.exp_name
@@ -296,34 +307,32 @@ class BC_trainer(OAITrainer):
 
 if __name__ == '__main__':
     args = get_arguments()
-    encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
     eval_only = False
     if eval_only:
-        bct = BC_trainer(encoding_fn, 'all', 'asymmetric_advantages', args, vis_eval=True)
+        bct = BehavioralCloningTrainer(encoding_fn, 'all', 'asymmetric_advantages', args, vis_eval=True)
         bct.load()
         bct.evaluate(10)
     else:
-        # bct = BC_trainer(encoding_fn, 'all', 'asymmetric_advantages', args, vis_eval=False)
+        # bct = BehavioralCloningTrainer(encoding_fn, 'all', 'asymmetric_advantages', args, vis_eval=False)
         # bct.training('all')
         # del bct
         #
-        # bct = BC_trainer(encoding_fn, 'all', 'asymmetric_advantages', args, vis_eval=False, use_subtasks=False)
+        # bct = BehavioralCloningTrainer(encoding_fn, 'all', 'asymmetric_advantages', args, vis_eval=False, use_subtasks=False)
         # bct.training('all_no_subtask')
         # del bct
 
-        bct = BC_trainer(encoding_fn, ['asymmetric_advantages'], 'asymmetric_advantages', args, vis_eval=False)
-        bct.training('single')
+        bct = BehavioralCloningTrainer(encoding_fn, ['asymmetric_advantages'], 'asymmetric_advantages', args, vis_eval=False)
+        bct.train_agents('single')
         del bct
 
-        # bct = BC_trainer(encoding_fn, ['asymmetric_advantages'], 'asymmetric_advantages', args, vis_eval=False, use_subtasks=False)
+        # bct = BehavioralCloningTrainer(encoding_fn, ['asymmetric_advantages'], 'asymmetric_advantages', args, vis_eval=False, use_subtasks=False)
         # bct.training('single_no_subtask')
         # del bct
         #
-        # bct = BC_trainer(encoding_fn, ['cramped_room','coordination_ring','counter_circuit','forced_coordination'], 'asymmetric_advantages', args, vis_eval=False)
+        # bct = BehavioralCloningTrainer(encoding_fn, ['cramped_room','coordination_ring','counter_circuit','forced_coordination'], 'asymmetric_advantages', args, vis_eval=False)
         # bct.training('all_but')
         # del bct
         #
-        # bct = BC_trainer(encoding_fn, ['cramped_room','coordination_ring','counter_circuit','forced_coordination'], 'asymmetric_advantages', args, vis_eval=False, use_subtasks=False)
+        # bct = BehavioralCloningTrainer(encoding_fn, ['cramped_room','coordination_ring','counter_circuit','forced_coordination'], 'asymmetric_advantages', args, vis_eval=False, use_subtasks=False)
         # bct.training('all_but_no_subtask')
         # del bct
-
