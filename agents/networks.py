@@ -67,12 +67,11 @@ class OAISinglePlayerFeatureExtractor(BaseFeaturesExtractor):
         if self.use_visual_obs:
             self.vis_encoder = GridEncoder(observation_space['visual_obs'].shape)
             test_shape = [1, *observation_space['visual_obs'].shape]
-            self.encoder_output_shape = get_output_shape(self.vis_encoder, test)[0]
+            self.encoder_output_shape = get_output_shape(self.vis_encoder, test_shape)[0]
         else:
             self.encoder_output_shape = 0
 
         # Define MLP for vector/feature based observations
-        print(self.encoder_output_shape, observation_space['agent_obs'].shape)
         self.vector_encoder = MLP(input_dim=self.encoder_output_shape + np.prod(observation_space['agent_obs'].shape),
                                   output_dim=features_dim)
         self.apply(weights_init_)

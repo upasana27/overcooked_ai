@@ -5,7 +5,7 @@ import pandas as pd
 
 
 layouts = 'all'
-data_path = '../data/' # args.base_dir / args.data_path / args.dataset
+data_path = './data/' # args.base_dir / args.data_path / args.dataset
 filename = '2019_hh_trials_all.pickle'
 main_trials = pd.read_pickle(Path(data_path) / filename)
 if filename == '2019_hh_trials_all.pickle':

@@ -176,13 +176,13 @@ class StateVisualizer:
         assert grid
         grid_surface = pygame.surface.Surface(self._unscaled_grid_pixel_size(grid))
         self._render_grid(grid_surface, grid)
-        self._render_players(grid_surface, state.agents, pidx)
+        self._render_players(grid_surface, state.players, pidx)
         self._render_objects(grid_surface, state.objects, grid)
 
         if p0_action is not None:
             p0_action_prob = [0] * len(Action.ALL_ACTIONS)
             p0_action_prob[p0_action] = 1
-            self._render_actions_probs(grid_surface, state.agents, [p0_action_prob, [0] * len(Action.ALL_ACTIONS)])
+            self._render_actions_probs(grid_surface, state.players, [p0_action_prob, [0] * len(Action.ALL_ACTIONS)])
 
         if self.scale_by_factor != 1:
             grid_surface = scale_surface_by_factor(grid_surface, self.scale_by_factor)
@@ -193,7 +193,7 @@ class StateVisualizer:
 
         # arrows does not seem good when rendered in very small resolution
         if self.is_rendering_action_probs and action_probs is not None:
-            self._render_actions_probs(grid_surface, state.agents, action_probs)
+            self._render_actions_probs(grid_surface, state.players, action_probs)
 
         if self.is_rendering_hud and hud_data:
             hud_width = self.width or grid_surface.get_width()

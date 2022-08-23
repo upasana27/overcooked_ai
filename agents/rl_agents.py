@@ -1,5 +1,9 @@
 import gym
+import numpy as np
+from pathlib import Path
 from stable_baselines3 import PPO
+import torch as th
+import wandb
 
 from arguments import get_arguments
 from agent import OAIAgent, OAITrainer
@@ -16,7 +20,9 @@ class SingleAgentWrapper(OAIAgent):
         """
         super(SingleAgentWrapper, self).__init__()
         self.agent = agent
+        self.policy= self.agent.policy
         self.set_player_idx(idx)
+        self.name = f'rl_single_agent_p{self.p_idx + 1}'
 
     def predict(self, obs):
         return self.agent.predict(obs)
@@ -25,12 +31,12 @@ class SingleAgentWrapper(OAIAgent):
         return self.agent.get_distribution(obs)
 
     def save(self, path):
-        print('In the future, please save the agent using TwoSingleAgentsTrainer.save')
-        self.agent.save(path + f'_p{self.player_idx + 1}')
+        print('In the future, please save the agent using SingleAgentTrainer.save or TwoSingleAgentsTrainer.save')
+        self.agent.save(path + f'_p{self.p_idx + 1}')
 
     def load(self, path):
-        print('In the future, please load the agent using TwoSingleAgentsTrainer.load')
-        self.agent.load(path + f'_p{self.player_idx + 1}')
+        print('In the future, please load the agent using SingleAgentTrainer.save or TwoSingleAgentsTrainer.load')
+        self.agent.load(path + f'_p{self.p_idx + 1}')
 
 class TwoSingleAgentsTrainer(OAITrainer):
     def __init__(self, args):
@@ -52,32 +58,46 @@ class TwoSingleAgentsTrainer(OAITrainer):
         self.envs[0].set_agent(self.agents[1], idx=1)
         self.envs[1].set_agent(self.agents[0], idx=0)
 
-    def train_agents(self, epochs=3000):
+    def train_agents(self, epochs=3000, exp_name=None):
+        exp_name = exp_name or self.args.exp_name
+        run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
+                         reinit=True, name=exp_name + '_rl_two_single_agents', mode=self.args.wandb_mode)
+        for i in range(2):
+            self.agents[i].policy.train()
         best_cum_rew = 0
+        best_path, best_tag = None, None
         for epoch in range(epochs):
             self.agents[0].learn(total_timesteps=1000)
             self.agents[1].learn(total_timesteps=1000)
             if epoch % 10 == 0:
                 cum_rew = self.eval_env.run_full_episode()
                 print(f'Episode eval at epoch {epoch}: {cum_rew}')
+                wandb.log({'eval_true_reward': cum_rew, 'epoch': epoch})
                 if cum_rew > best_cum_rew:
-                    self.save()
+                    best_path, best_tag = self.save()
                     best_cum_rew = cum_rew
+        if best_path is not None:
+            self.load(best_path, best_tag)
+        run.finish()
 
     def get_agent(self, idx):
-        return self.agents[idx]
+        agent = SingleAgentWrapper(self.agents[idx], idx)
+        agent.set_name(f'rl_two_single_agents_p{idx + 1}')
+        return agent
 
     def save(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'RL_two_single_agents' / self.args.layout_name
+        Path(path).mkdir(parents=True, exist_ok=True)
         tag = tag or self.args.exp_name
         for i in range(2):
-            self.agents[i].save(path / tag + f'_p{i + 1}')
+            self.agents[i].save(path / (tag + f'_p{i + 1}'))
+        return path, tag
 
     def load(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'RL_two_single_agents' / self.args.layout_name
         tag = tag or self.args.exp_name
         for i in range(2):
-            self.agents[i].load(path / tag + f'_p{i + 1}')
+            self.agents[i].load(path / (tag + f'_p{i + 1}'))
 
 
 class SingleAgentTrainer(OAITrainer):
@@ -85,8 +105,8 @@ class SingleAgentTrainer(OAITrainer):
         super(SingleAgentTrainer, self).__init__(args)
         self.args = args
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
-        self.teammate_idx = teammate_idx
-        self.player_idx = (teammate_idx + 1) % 2
+        self.t_idx = teammate_idx
+        self.p_idx = (teammate_idx + 1) % 2
         kwargs = {'layout': args.layout_name, 'encoding_fn': self.encoding_fn, 'shape_rewards': True, 'args': args}
         self.env = OvercookedGymEnv(p1_agent=teammate, **kwargs) if teammate_idx == 0 else \
                    OvercookedGymEnv(p2_agent=teammate, **kwargs)
@@ -101,35 +121,46 @@ class SingleAgentTrainer(OAITrainer):
 
         self.eval_env = OvercookedGymEnv(p1_agent=self.agents[0], p2_agent=self.agents[1],
                                          layout=args.layout_name, encoding_fn=self.encoding_fn, args=args)
-    def train_agents(self, epochs=3000):
-        # TODO after training set agents to best saved agent
+    def train_agents(self, epochs=3000, exp_name=None):
+        exp_name = exp_name or self.args.exp_name
+        run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
+                         reinit=True, name=exp_name + '_rl_single_agent', mode=self.args.wandb_mode)
+        for i in range(2):
+            self.agents[i].policy.train()
         best_cum_rew = 0
+        best_path, best_tag = None, None
         for epoch in range(epochs):
-            self.agents[self.player_idx].learn(total_timesteps=1000)
+            self.agents[self.p_idx].learn(total_timesteps=1000)
             if epoch % 10 == 0:
                 cum_rew = self.eval_env.run_full_episode()
                 print(f'Episode eval at epoch {epoch}: {cum_rew}')
+                wandb.log({'eval_true_reward': cum_rew, 'epoch': epoch})
                 if cum_rew > best_cum_rew:
-                    self.save()
+                    best_path, best_tag = self.save()
                     best_cum_rew = cum_rew
+        if best_path is not None:
+            self.load(best_path, best_tag)
+        run.finish()
 
     def get_agent(self, idx):
-        if idx != self.player_idx:
-            raise ValueError(f'This trainer only trained a player {self.player_idx + 1} agent, '
-                             f'and therefore cannot return a {self.teammate_idx + 1} agent')
-        return self.agents[self.player_idx]
+        if idx != self.p_idx:
+            raise ValueError(f'This trainer only trained a player {self.p_idx + 1} agent, '
+                             f'and therefore cannot return a {self.t_idx + 1} agent')
+        agent = SingleAgentWrapper(self.agents[idx], idx)
+        agent.set_name(f'rl_single_agent_with_bc_p{idx + 1}')
+        return agent
 
     def save(self, path=None, tag=None):
-        path = path or self.args.base_dir / 'agent_models' / 'RL_single_agent' / self.args.layout_name
+        path = path or self.args.base_dir / 'agent_models' / 'RL_single_agent_with_bc' / self.args.layout_name
+        Path(path).mkdir(parents=True, exist_ok=True)
         tag = tag or self.args.exp_name
-        self.agents[self.player_idx].save(path / tag + f'_p{self.player_idx + 1}')
+        self.agents[self.p_idx].save(path / (tag + f'_p{self.p_idx + 1}'))
+        return path, tag
 
     def load(self, path=None, tag=None):
-        path = path or self.args.base_dir / 'agent_models' / 'RL_single_agent' / self.args.layout_name
+        path = path or self.args.base_dir / 'agent_models' / 'RL_single_agent_with_bc' / self.args.layout_name
         tag = tag or self.args.exp_name
-        for i in range(2):
-            self.agents[i].load(path / tag + f'_p{i + 1}')
-
+        self.agents[self.p_idx].load(path / (tag + f'_p{self.p_idx + 1}'))
 
 class DoubleAgentWrapper(OAIAgent):
     def __init__(self, double_agent, idx):
@@ -139,22 +170,23 @@ class DoubleAgentWrapper(OAIAgent):
         """
         super(DoubleAgentWrapper, self).__init__()
         self.double_agent = double_agent
+        self.policy = self.double_agent.policy
         self.set_player_idx(idx)
 
     def predict(self, obs):
         action, state = self.double_agent.predict(obs)
-        return action[self.idx], state
+        return action[self.p_idx], state
 
     def get_distribution(self, obs: th.Tensor):
-        return self.double_agent.get_distribution(obs)[self.idx]
+        return self.double_agent.get_distribution(obs)[self.p_idx]
 
     def save(self, path):
         print('In the future, please save the agent using OneDoubleAgentTrainer.save')
-        self.double_agent.save(path + f'_p{self.player_idx + 1}')
+        self.double_agent.save(path + f'_p{self.p_idx + 1}')
 
     def load(self, path):
         print('In the future, please load the agent using OneDoubleAgentTrainer.load')
-        self.double_agent.load(path + f'_p{self.player_idx + 1}')
+        self.double_agent.load(path + f'_p{self.p_idx + 1}')
 
 class OneDoubleAgentTrainer(OAITrainer):
     def __init__(self, args):
@@ -170,16 +202,25 @@ class OneDoubleAgentTrainer(OAITrainer):
         self.agent = PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1)
         self.eval_env = OvercookedGymEnv(layout=args.layout_name, encoding_fn=self.encoding_fn, args=args)
 
-    def train_agents(self, epochs=3000):
+    def train_agents(self, epochs=3000, exp_name=None):
+        exp_name = exp_name or self.args.exp_name
+        run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
+                         reinit=True, name=exp_name + '_rl_double_agent', mode=self.args.wandb_mode)
+        self.agent.policy.train()
         best_cum_rew = 0
+        best_path, best_tag = None, None
         for epoch in range(epochs):
             self.agent.learn(total_timesteps=1000)
             if epoch % 10 == 0:
                 cum_rew = self.run_full_episode()
                 print(f'Episode eval at epoch {epoch}: {cum_rew}')
+                wandb.log({'eval_true_reward': cum_rew, 'epoch': epoch})
                 if cum_rew > best_cum_rew:
-                    self.save()
+                    best_path, best_tag = self.save()
                     best_cum_rew = cum_rew
+        if best_path is not None:
+            self.load(best_path, best_tag)
+        run.finish()
 
     def run_full_episode(self):
         self.eval_env.reset()
@@ -192,12 +233,16 @@ class OneDoubleAgentTrainer(OAITrainer):
         return total_reward
 
     def get_agent(self, idx):
-        return DoubleAgentWrapper(self, idx)
+        agent = DoubleAgentWrapper(self.agent, idx)
+        agent.set_name(f'rl_double_agent_p{idx + 1}')
+        return agent
 
     def save(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'RL_double_agent' / self.args.layout_name
+        Path(path).mkdir(parents=True, exist_ok=True)
         tag = tag or self.args.exp_name
         self.agent.save(path / tag)
+        return tag, path
 
     def load(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'RL_double_agent' / self.args.layout_name

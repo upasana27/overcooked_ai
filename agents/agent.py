@@ -13,9 +13,16 @@ class OAIAgent(ABC):
         super(OAIAgent, self).__init__()
         # Must define a policy. The policy must implement a get_distribution(obs) that returns the action distribution
         self.policy = None
+        self.name = 'WARNING_NAME_IS_NOT_PROPERLY_SET'
+
+    def set_name(self, name):
+        self.name = name
 
     def set_player_idx(self, idx):
-        self.player_idx = idx
+        # Player index
+        self.p_idx = idx
+        # Teammate index
+        self.t_idx = (idx + 1) % 2
 
     def step(self, state, joint_action):
         pass

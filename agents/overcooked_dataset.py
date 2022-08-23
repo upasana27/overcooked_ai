@@ -36,7 +36,6 @@ class OvercookedDataset(Dataset):
 
         self.layout_to_env = {}
         self.grid_shape = [0, 0]
-        print(self.main_trials.layout_name.unique())
         for layout in self.main_trials.layout_name.unique():
             env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(layout), horizon=args.horizon)
             self.layout_to_env[layout] = env
@@ -119,7 +118,6 @@ class OvercookedDataset(Dataset):
     def add_subtasks(self):
         curr_trial = None
         subtask_start_idx = [0, 0]
-        trial_start_idx = [0, 0]
         interact_id = Action.ACTION_TO_INDEX[Action.INTERACT]
 
         # Add columns in dataframe
@@ -127,20 +125,19 @@ class OvercookedDataset(Dataset):
         self.main_trials['p2_curr_subtask'] = None
         self.main_trials['p1_next_subtask'] = None
         self.main_trials['p2_next_subtask'] = None
+        self.main_trials = self.main_trials.reset_index()
 
-        # Iterate over all row
+        # Iterate over all rows
         for index, row in tqdm(self.main_trials.iterrows()):
             if row['trial_id'] != curr_trial:
                 # Start of a new trial, label final actions of previous trial with unknown subtask
                 subtask = Subtasks.SUBTASKS_TO_IDS['unknown']
                 for i in range(len(row['state'].players)):
                     self.main_trials.loc[subtask_start_idx[i]:index-1, f'p{i + 1}_curr_subtask'] = subtask
-                    start_idx = max(subtask_start_idx[i] - 1, trial_start_idx[i])
-                    self.main_trials.loc[start_idx:index-1, f'p{i + 1}_next_subtask'] = subtask
+                    self.main_trials.loc[subtask_start_idx[i]-1:index-1, f'p{i + 1}_next_subtask'] = subtask
                 curr_trial = row['trial_id']
                 # Store starting index of next subtask
                 subtask_start_idx = [index, index]
-                trial_start_idx = [index, index]
 
             # For each agent
             for i in range(len(row['state'].players)):
@@ -156,18 +153,17 @@ class OvercookedDataset(Dataset):
                 # All subtasks will start and end with an INTERACT action
                 if row['joint_action'][i] == interact_id:
                     # Make sure the next row is part of the current trial
-                    if next_row['trial_id'] != curr_trial:
-                        subtask = Subtasks.SUBTASKS_TO_IDS['unknown']
-                    else:
+                    if next_row['trial_id'] == curr_trial:
                         # Find out which subtask has been completed
                         subtask = calculate_completed_subtask(row['layout'], row['state'], next_row['state'], i)
                         if subtask is None:
-                            continue # No completed subtask, continue to next payer
+                            continue # No completed subtask, continue to next player
+                    else:
+                        continue
 
                     # Label previous actions with subtask
                     self.main_trials.loc[subtask_start_idx[i]:index, f'p{i + 1}_curr_subtask'] = subtask
-                    start_idx = max(trial_start_idx[i], subtask_start_idx[i]-1)
-                    self.main_trials.loc[start_idx:index-1, f'p{i + 1}_next_subtask'] = subtask
+                    self.main_trials.loc[subtask_start_idx[i]-1:index-1, f'p{i + 1}_next_subtask'] = subtask
                     subtask_start_idx[i] = index + 1
 
         # Make sure that this data is defined everywhere

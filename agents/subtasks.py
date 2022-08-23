@@ -93,4 +93,7 @@ def calculate_completed_subtask(layout, prev_state, curr_state, p_idx):
     else:
         raise ValueError(f'Unexpected transition. {prev_obj} -> {curr_obj}.')
 
-    return Subtasks.SUBTASKS_TO_IDS[subtask]
+    if subtask:
+        subtask = Subtasks.SUBTASKS_TO_IDS[subtask]
+
+    return subtask
