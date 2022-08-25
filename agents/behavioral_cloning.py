@@ -142,7 +142,7 @@ class BehaviouralCloningAgent(nn.Module, OAIAgent):
 
 
 class BehavioralCloningTrainer(OAITrainer):
-    def __init__(self, args, vis_eval=False):
+    def __init__(self, dataset, args, vis_eval=False):
         """
         Class to train BC agent
         :param env: Overcooked environment to use
@@ -153,12 +153,13 @@ class BehavioralCloningTrainer(OAITrainer):
         super(BehavioralCloningTrainer, self).__init__(args)
         self.device = th.device('cuda' if th.cuda.is_available() else 'cpu')
         self.num_players = 2
+        self.dataset = dataset
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.visualize_evaluation = vis_eval
         self.use_subtasks = args.use_subtasks
         self.train_layouts = [args.layout_name]
         self.test_layout = args.layout_name
-        self.train_dataset = OvercookedDataset(self.encoding_fn, self.train_layouts, args)
+        self.train_dataset = OvercookedDataset(dataset, self.encoding_fn, self.train_layouts, args)
         self.grid_shape = self.train_dataset.grid_shape
         self.eval_env = OvercookedGymEnv(layout=self.test_layout, encoding_fn=self.encoding_fn,
                                          grid_shape=self.grid_shape, args=args)
@@ -277,7 +278,8 @@ class BehavioralCloningTrainer(OAITrainer):
         """ Training routine """
         exp_name = exp_name or self.args.exp_name
         run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
-                         reinit=True, name=exp_name + '_bc', mode=self.args.wandb_mode)
+                         reinit=True, name='_'.join([exp_name, self.dataset, self.test_layout, 'bc']),
+                         mode=self.args.wandb_mode)
 
         for i in range(2):
             self.agents[i].policy.train()
@@ -298,15 +300,17 @@ class BehavioralCloningTrainer(OAITrainer):
         return self.agents[idx]
 
     def save(self, path=None, tag=None):
-        path = path or self.args.base_dir / 'agent_models' / 'IL_agents' / self.args.layout_name
+        path = path or self.args.base_dir / 'agent_models' / 'IL_agents' / self.test_layout
         tag = tag or self.args.exp_name
+        tag += '_' + self.dataset
         for i in range(2):
             self.agents[i].save(path / (tag + f'_p{i + 1}'))
         return path, tag
 
     def load(self, path=None, tag=None):
-        path = path or self.args.base_dir / 'agent_models' / 'IL_agents' / self.args.layout_name
+        path = path or self.args.base_dir / 'agent_models' / 'IL_agents' / self.test_layout
         tag = tag or self.args.exp_name
+        tag += '_' + self.dataset
         for i in range(2):
             self.agents[i].load(path / (tag + f'_p{i + 1}'))
 

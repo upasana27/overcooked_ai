@@ -58,7 +58,7 @@ class TwoSingleAgentsTrainer(OAITrainer):
         self.envs[0].set_agent(self.agents[1], idx=1)
         self.envs[1].set_agent(self.agents[0], idx=0)
 
-    def train_agents(self, epochs=3000, exp_name=None):
+    def train_agents(self, epochs=1000, exp_name=None):
         exp_name = exp_name or self.args.exp_name
         run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
                          reinit=True, name=exp_name + '_rl_two_single_agents', mode=self.args.wandb_mode)
@@ -121,7 +121,7 @@ class SingleAgentTrainer(OAITrainer):
 
         self.eval_env = OvercookedGymEnv(p1_agent=self.agents[0], p2_agent=self.agents[1],
                                          layout=args.layout_name, encoding_fn=self.encoding_fn, args=args)
-    def train_agents(self, epochs=3000, exp_name=None):
+    def train_agents(self, epochs=1000, exp_name=None):
         exp_name = exp_name or self.args.exp_name
         run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
                          reinit=True, name=exp_name + '_rl_single_agent', mode=self.args.wandb_mode)
@@ -202,7 +202,7 @@ class OneDoubleAgentTrainer(OAITrainer):
         self.agent = PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1)
         self.eval_env = OvercookedGymEnv(layout=args.layout_name, encoding_fn=self.encoding_fn, args=args)
 
-    def train_agents(self, epochs=3000, exp_name=None):
+    def train_agents(self, epochs=1000, exp_name=None):
         exp_name = exp_name or self.args.exp_name
         run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
                          reinit=True, name=exp_name + '_rl_double_agent', mode=self.args.wandb_mode)

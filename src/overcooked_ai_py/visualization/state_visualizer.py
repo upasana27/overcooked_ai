@@ -417,8 +417,6 @@ class StateVisualizer:
         else:
             raise ValueError("vertical_align can have one of the values: "+str(["top", "center", "bottom"]))
 
-        print(img,left_x, top_y, TS, x, y)
-
         game_surface.blit(img, (x, y))
         # img.blit_on_surface(game_surface, self._position_in_unscaled_pixels( (x, y) ))
 
@@ -449,5 +447,4 @@ class StateVisualizer:
                     else:
                         position = Action.move_in_direction(player.position, action)
                         img =  pygame.transform.rotozoom(rescaled_arrow, direction_to_rotation[action], size)
-                        print(surface.get_size(), player.position, img.get_size())
                         self._render_on_tile_position(surface, img, position, **direction_to_aligns[action])

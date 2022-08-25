@@ -17,12 +17,12 @@ from tqdm import tqdm
 
 
 class OvercookedDataset(Dataset):
-    def __init__(self, encoding_fn, layouts, args, add_subtask_info=True):
+    def __init__(self, dataset, encoding_fn, layouts, args, add_subtask_info=True):
         self.add_subtask_info = add_subtask_info
         self.encoding_fn = encoding_fn
-        self.data_path = args.base_dir / args.data_path / args.dataset
+        self.data_path = args.base_dir / args.data_path / dataset
         self.main_trials = pd.read_pickle(self.data_path)
-        if args.dataset == '2019_hh_trials_all.pickle':
+        if dataset == '2019_hh_trials_all.pickle':
             self.main_trials.loc[self.main_trials.layout_name == 'random0', 'layout_name'] = 'forced_coordination'
             self.main_trials.loc[self.main_trials.layout_name == 'random3', 'layout_name'] = 'counter_circuit'
         print(f'Number of all trials: {len(self.main_trials)}')

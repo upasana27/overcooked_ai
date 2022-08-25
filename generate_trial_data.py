@@ -13,7 +13,7 @@ from os.path import isfile, join
 import re
 
 
-from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld, Direction, Action
+from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld, Direction, Action, OvercookedState
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
 from overcooked_ai_py.agents.agent import StayAgent, RandomAgent, AgentFromPolicy, GreedyHumanModel
 # from overcooked_ai_py.planning.planners import MediumLevelPlanner
@@ -42,29 +42,62 @@ one_counter_params = {
 }
 
 
+def str_to_actions(joint_action):
+    """
+    Convert df cell format of a joint action to a joint action as a tuple of indices.
+    Used to convert pickle files which are stored as strings into np.arrays
+    """
+    try:
+        joint_action = json.loads(joint_action)
+    except json.decoder.JSONDecodeError:
+        # Hacky fix taken from https://github.com/HumanCompatibleAI/human_aware_rl/blob/master/human_aware_rl/human/data_processing_utils.py#L29
+        joint_action = eval(joint_action)
+    for i in range(2):
+        if type(joint_action[i]) is list:
+            joint_action[i] = tuple(joint_action[i])
+        if type(joint_action[i]) is str:
+            joint_action[i] = joint_action[i].lower()
+        assert joint_action[i] in Action.ALL_ACTIONS
+    return joint_action
+
+
+def str_to_state(state):
+    """
+    Convert from a df cell format of a state to an Overcooked State
+    Used to convert pickle files which are stored as strings into overcooked states
+    """
+    if type(state) is str:
+        state = json.loads(state)
+    return OvercookedState.from_dict(state)
+
 class DataCollector:
     """Class to run an Overcooked Gridworld game, leaving one of the agents as fixed.
     Useful for debugging. Most of the code from http://pygametutorials.wikidot.com/tutorials-basic."""
-    def __init__(self, data_path, layout_name, slowmo_rate=1):
+    def __init__(self, data_path, layout_name, slowmo_rate=1, traj_file=None):
         self._running = True
         self._display_surf = None
         self.layout_name = layout_name
         self.env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(self.layout_name), horizon=1200)
         self.agent = None
         self.slowmo_rate = slowmo_rate
-        self.fps = 30 // slowmo_rate
+        self.fps = 600 // slowmo_rate
         self.score = 0
         self.curr_tick = 0
-        self.trajectory = []
         self.joint_action = [None, None]
         self.data_path = data_path
         self.data_path.mkdir(parents=True, exist_ok=True)
-        trial_file = re.compile('^.*\.[0-9]+\.pickle$')
-        trial_ids = []
-        for file in listdir(self.data_path):
-            if isfile(join(self.data_path, file)) and trial_file.match(file):
-                trial_ids.append(int(file.split('.')[-2]))
-        self.trial_id = max(trial_ids) + 1 if len(trial_ids) > 0 else 1
+        self.collect_trajectory = not bool(traj_file)
+        if self.collect_trajectory:
+            self.trajectory = []
+            trial_file = re.compile('^.*\.[0-9]+\.pickle$')
+            trial_ids = []
+            for file in listdir(self.data_path):
+                if isfile(join(self.data_path, file)) and trial_file.match(file):
+                    trial_ids.append(int(file.split('.')[-2]))
+            self.trial_id = max(trial_ids) + 1 if len(trial_ids) > 0 else 1
+        else:
+            self.trajectory = pd.read_pickle(data_path / traj_file) if traj_file else []
+            self.trajectory = self.trajectory[self.trajectory['layout_name'] == layout_name]
 
     def on_init(self):
         pygame.init()
@@ -90,6 +123,8 @@ class DataCollector:
                 action = Direction.WEST
             elif pressed_key == K_SPACE:
                 action = Action.INTERACT
+            elif pressed_key == K_s:
+                action = Action.STAY
             self.joint_action[pidx] = action
 
         if event.type == pygame.QUIT:
@@ -111,7 +146,7 @@ class DataCollector:
             "score" : self.score,
             "time_elapsed" : self.curr_tick / self.fps,
             "cur_gameloop" : self.curr_tick,
-            "layout" : json.dumps(self.env.mdp.terrain_mtx),
+            "layout" : self.env.mdp.terrain_mtx,
             "layout_name" : self.layout_name,
             "trial_id" : 100 # TODO this is just for testing self.trial_id,
             # "player_0_id" : self.agents[0],
@@ -119,8 +154,8 @@ class DataCollector:
             # "player_0_is_human" : self.agents[0] in self.human_players,
             # "player_1_is_human" : self.agents[1] in self.human_players
         }
-
-        self.trajectory.append(transition)
+        if self.collect_trajectory:
+            self.trajectory.append(transition)
         return done
 
     def on_loop(self):
@@ -148,10 +183,9 @@ class DataCollector:
     def on_cleanup(self):
         pygame.quit()
 
-    def on_execute(self):
+    def collection_execution(self):
         if self.on_init() == False:
             self._running = False
-        sleep_time = 1000 // self.fps
         while (self._running):
             self.joint_action = [None, None]
             for i in range(2):
@@ -162,16 +196,36 @@ class DataCollector:
                     pygame.event.pump()
             self.on_loop()
 
-            # for event in pygame.event.get():
-            #     self.on_event(event)
-            # self.on_loop()
-            # self.on_render()
-            # pygame.event.pump()
-            # pygame.time.wait(sleep_time)
-
         self.save_trajectory()
-
         self.on_cleanup()
+        print(f'Trial finished in {self.curr_tick} steps with total reward {self.score}')
+
+    def replay_execution(self):
+        assert self.trajectory is not None
+        if self.on_init() == False:
+            self._running = False
+        sleep_time = 1000 // self.fps
+        trial_id = self.trajectory.iloc[0]['trial_id']
+        for index, row in self.trajectory.iterrows():
+            if row['trial_id'] == trial_id and not self.env.is_done():
+                self.on_render()
+                # assert str_to_state(row['state']) == self.env.state
+                pygame.time.wait(sleep_time)
+                self.joint_action = str_to_actions(row['joint_action'])
+                self.on_loop()
+            else:
+                self.env.reset()
+                print(f'Trial finished in {self.curr_tick} steps with total reward {self.score}')
+                trial_id = row['trial_id']
+                self.score = 0
+                self.curr_tick = 0
+        self.on_cleanup()
+
+    def on_execute(self):
+        if self.collect_trajectory:
+            self.collection_execution()
+        else:
+            self.replay_execution()
 
     def save_trajectory(self):
         df = pd.DataFrame(self.trajectory)
@@ -183,6 +237,19 @@ class DataCollector:
         df = pd.concat([pd.read_pickle(data_path / f) for f in listdir(data_path) if trial_file.match(f)])
         print(f'Combined df has a length of {len(df)}')
         df.to_pickle(data_path / f'all_trials.pickle')
+
+    @staticmethod
+    def fix_files_df(data_path):
+        trial_file = re.compile('^.*\.[0-9]+\.pickle$')
+        for f in listdir(data_path):
+            if trial_file.match(f):
+                df = pd.read_pickle(data_path / f)
+                def joiner(list_of_lists):
+                    for i in range(len(list_of_lists)):
+                        list_of_lists[i] = ''.join(list_of_lists[i])
+                    return str(list_of_lists)
+                df['layout'] = df['layout'].apply(joiner)
+                df.to_pickle(data_path / f)
 
 
 
@@ -215,11 +282,11 @@ if __name__ == "__main__":
     parser.add_argument('--combine', action='store_true', help='Combine all previous trials')
 
     args = parser.parse_args()
-    data_path = Path(getcwd()) / 'data' / 'generated_data'
+    data_path = Path(getcwd()) / 'data' #/ 'generated_data'
 
     if args.combine:
         DataCollector.combine_df(data_path)
     else:
-        layout_name = 'tf_test_4'
-        dc = DataCollector(data_path, layout_name, slowmo_rate=8)
+        layout_name = 'asymmetric_advantages'
+        dc = DataCollector(data_path, layout_name, slowmo_rate=8, traj_file='2019_hh_trials_all.pickle')
         dc.on_execute()

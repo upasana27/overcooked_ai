@@ -230,17 +230,19 @@ class TypeBasedAdaptor(OAIAgent):
 
 
     @staticmethod
-    def create_models(args, bc_epochs=200, rl_epochs=3000):
+    def create_models(args, bc_epochs=200, rl_epochs=200):
         # TODO add options to each kind of agent (e.g. reward shaping / A2C vs PPO for RL agents, using subtasks for BC Agents
         p1_agents = []
         p2_agents = []
         # BC agents
-        bct = BehavioralCloningTrainer(args)
-        bct.train_agents(epochs=bc_epochs)
-        bc_p1 = bct.get_agent(idx=0)
-        bc_p2 = bct.get_agent(idx=1)
-        p1_agents.append(bc_p1)
-        p2_agents.append(bc_p2)
+        for dataset_file in ['tf_test_5_5.1.pickle', 'tf_test_5_5.2.pickle', 'tf_test_5_5.3.pickle',
+                             'tf_test_5_5.4.pickle', 'tf_test_5_5.5.pickle', 'all_trials.pickle']:
+            bct = BehavioralCloningTrainer(dataset_file, args)
+            bct.train_agents(epochs=bc_epochs)
+            bc_p1 = bct.get_agent(idx=0)
+            bc_p2 = bct.get_agent(idx=1)
+            p1_agents.append(bc_p1)
+            p2_agents.append(bc_p2)
         # RL double agent
         rl_odat = OneDoubleAgentTrainer(args)
         rl_odat.train_agents(epochs=rl_epochs)
