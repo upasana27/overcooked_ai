@@ -39,8 +39,9 @@ class SingleAgentWrapper(OAIAgent):
         self.agent.load(path + f'_p{self.p_idx + 1}')
 
 class TwoSingleAgentsTrainer(OAITrainer):
-    def __init__(self, args):
+    def __init__(self, device, args):
         super(TwoSingleAgentsTrainer, self).__init__(args)
+        self.device = device
         self.args = args
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         kwargs = {'layout': args.layout_name, 'encoding_fn': self.encoding_fn, 'shape_rewards': True, 'args': args}
@@ -52,6 +53,8 @@ class TwoSingleAgentsTrainer(OAITrainer):
         )
         self.agents = [PPO("MultiInputPolicy", self.envs[0], policy_kwargs=policy_kwargs, verbose=1),
                        PPO("MultiInputPolicy", self.envs[1], policy_kwargs=policy_kwargs, verbose=1)]
+        self.agents[0].policy.to(self.device)
+        self.agents[0].policy.to(self.device)
 
         self.eval_env = OvercookedGymEnv(p1_agent=self.agents[0], p2_agent=self.agents[1],
                                          layout=args.layout_name, encoding_fn=self.encoding_fn, args=args)
@@ -67,8 +70,8 @@ class TwoSingleAgentsTrainer(OAITrainer):
         best_cum_rew = 0
         best_path, best_tag = None, None
         for epoch in range(epochs):
-            self.agents[0].learn(total_timesteps=1000)
-            self.agents[1].learn(total_timesteps=1000)
+            self.agents[0].learn(total_timesteps=10000)
+            self.agents[1].learn(total_timesteps=10000)
             if epoch % 10 == 0:
                 cum_rew = self.eval_env.run_full_episode()
                 print(f'Episode eval at epoch {epoch}: {cum_rew}')
@@ -101,8 +104,9 @@ class TwoSingleAgentsTrainer(OAITrainer):
 
 
 class SingleAgentTrainer(OAITrainer):
-    def __init__(self, teammate, teammate_idx, args):
+    def __init__(self, teammate, teammate_idx, device, args):
         super(SingleAgentTrainer, self).__init__(args)
+        self.device = device
         self.args = args
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.t_idx = teammate_idx
@@ -118,9 +122,11 @@ class SingleAgentTrainer(OAITrainer):
         self.agents = [teammate, PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1)] \
                       if teammate_idx == 0 else \
                       [PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1), teammate]
-
+        self.agents[0].policy.to(device)
+        self.agents[1].policy.to(device)
         self.eval_env = OvercookedGymEnv(p1_agent=self.agents[0], p2_agent=self.agents[1],
                                          layout=args.layout_name, encoding_fn=self.encoding_fn, args=args)
+
     def train_agents(self, epochs=1000, exp_name=None):
         exp_name = exp_name or self.args.exp_name
         run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
@@ -130,7 +136,7 @@ class SingleAgentTrainer(OAITrainer):
         best_cum_rew = 0
         best_path, best_tag = None, None
         for epoch in range(epochs):
-            self.agents[self.p_idx].learn(total_timesteps=1000)
+            self.agents[self.p_idx].learn(total_timesteps=10000)
             if epoch % 10 == 0:
                 cum_rew = self.eval_env.run_full_episode()
                 print(f'Episode eval at epoch {epoch}: {cum_rew}')
@@ -189,17 +195,18 @@ class DoubleAgentWrapper(OAIAgent):
         self.double_agent.load(path + f'_p{self.p_idx + 1}')
 
 class OneDoubleAgentTrainer(OAITrainer):
-    def __init__(self, args):
+    def __init__(self, device, args):
         super(OneDoubleAgentTrainer, self).__init__(args)
+        self.device = device
         self.args = args
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.env = OvercookedGymEnv(layout=args.layout_name, encoding_fn=self.encoding_fn, shape_rewards=True, args=args)
-
         policy_kwargs = dict(
             features_extractor_class=OAIDoublePlayerFeatureExtractor,
             features_extractor_kwargs=dict(features_dim=256),
         )
         self.agent = PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1)
+        self.agent.policy.to(self.device)
         self.eval_env = OvercookedGymEnv(layout=args.layout_name, encoding_fn=self.encoding_fn, args=args)
 
     def train_agents(self, epochs=1000, exp_name=None):
@@ -210,7 +217,7 @@ class OneDoubleAgentTrainer(OAITrainer):
         best_cum_rew = 0
         best_path, best_tag = None, None
         for epoch in range(epochs):
-            self.agent.learn(total_timesteps=1000)
+            self.agent.learn(total_timesteps=10000)
             if epoch % 10 == 0:
                 cum_rew = self.run_full_episode()
                 print(f'Episode eval at epoch {epoch}: {cum_rew}')
@@ -247,6 +254,7 @@ class OneDoubleAgentTrainer(OAITrainer):
     def load(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'RL_double_agent' / self.args.layout_name
         tag = tag or self.args.exp_name
+        print(path, tag, path / tag)
         self.agent.load(path / tag)
 
 

@@ -1,11 +1,10 @@
 #!/bin/bash
 #SBATCH --qos=blanca-kann
-#SBATCH --time=08:00:00
+#SBATCH --time=24:00:00
 #SBATCH --gres=gpu
 #SBATCH --ntasks=4
 #SBATCH --mem=40G
-#SBATCH --job-tag=oai
 #SBATCH --output=oai.%j.out
 source /curc/sw/anaconda3/latest
-conda activate arl
-python agents/behavioral_cloning.py --base-dir /projects/star7023/oai --layout asymmetric_advantages --dataset 2019_hh_trials_all.pickle --encoding-fn dense_lossless
+conda activate oai
+python3 agents/adaptable_agents.py --base-dir /projects/star7023/oai --layout tf_test_5_5 --encoding-fn OAI_lossless --use-subtasks --exp-name bc_1200_oai_lossless --horizon 1200

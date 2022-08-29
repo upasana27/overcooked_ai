@@ -81,11 +81,11 @@ class BehaviouralCloningPolicy(nn.Module):
 
 
 class BehaviouralCloningAgent(nn.Module, OAIAgent):
-    def __init__(self, device, visual_obs_shape, agent_obs_shape, p_idx, args):
+    def __init__(self, device, visual_obs_shape, agent_obs_shape, p_idx, args, hidden_dim=256):
         super(BehaviouralCloningAgent, self).__init__()
         self.device = device
         self.use_subtasks = args.use_subtasks
-        self.policy = BehaviouralCloningPolicy(device, visual_obs_shape, agent_obs_shape, args)
+        self.policy = BehaviouralCloningPolicy(device, visual_obs_shape, agent_obs_shape, args, hidden_dim=hidden_dim)
         self.set_player_idx(p_idx)
         self.name = f'il_bc_p{p_idx + 1}'
         if self.use_subtasks:
@@ -182,7 +182,7 @@ class BehavioralCloningTrainer(OAITrainer):
         if self.visualize_evaluation:
             self.eval_env.setup_visualization()
 
-    def evaluate(self, num_trials=10, sample=True):
+    def evaluate(self, num_trials=1, sample=True):
         """
         Evaluate agent on <num_trials> trials. Returns average true reward and average shaped reward trials.
         :param num_trials: Number of trials to run
@@ -216,6 +216,8 @@ class BehavioralCloningTrainer(OAITrainer):
                 trial_reward += np.sum(info['sparse_r_by_agent'])
                 trial_shaped_r += np.sum(info['shaped_r_by_agent'])
                 timestep += 1
+                if (timestep+1) % 200 == 0:
+                    print(f'Reward of {trial_reward} at step {timestep}')
             average_reward.append(trial_reward)
             shaped_reward.append(trial_shaped_r)
         return np.mean(average_reward), np.mean(shaped_reward)
@@ -239,7 +241,7 @@ class BehavioralCloningTrainer(OAITrainer):
                 pred_action, pred_subtask = preds
                 subtask_loss = self.subtask_criterion(pred_subtask, next_subtask[:, i])
                 subtask_mask = action[:, i] == Action.ACTION_TO_INDEX[Action.INTERACT]
-                loss_mask = th.logical_or(subtask_mask, th.rand_like(subtask_loss, device=self.device) > 0.95)
+                loss_mask = subtask_mask #th.logical_or(subtask_mask, th.rand_like(subtask_loss, device=self.device) > 0.95)
                 subtask_loss = th.mean(subtask_loss * loss_mask)
                 tot_loss += th.mean(subtask_loss)
                 metrics[f'p{i}_subtask_loss'] = subtask_loss.item()
@@ -287,12 +289,13 @@ class BehavioralCloningTrainer(OAITrainer):
         best_reward = 0
         for epoch in range(epochs):
             metrics = self.train_epoch()
-            mean_reward, shaped_reward = self.evaluate()
-            wandb.log({'eval_true_reward': mean_reward, 'eval_shaped_reward': shaped_reward, 'epoch': epoch, **metrics})
-            if mean_reward > best_reward:
-                print(f'Best reward achieved on epoch {epoch}, saving models')
-                best_path, best_tag = self.save(tag='best_reward')
-                best_reward = mean_reward
+            if (epoch + 1) % 10 == 0:
+                mean_reward, shaped_reward = self.evaluate()
+                wandb.log({'eval_true_reward': mean_reward, 'eval_shaped_reward': shaped_reward, 'epoch': epoch, **metrics})
+                if mean_reward > best_reward:
+                    print(f'Best reward achieved on epoch {epoch}, saving models')
+                    best_path, best_tag = self.save(tag='best_reward')
+                    best_reward = mean_reward
         self.load(best_path, best_tag)
         run.finish()
 
@@ -309,8 +312,7 @@ class BehavioralCloningTrainer(OAITrainer):
 
     def load(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'IL_agents' / self.test_layout
-        tag = tag or self.args.exp_name
-        tag += '_' + self.dataset
+        tag = tag or (self.args.exp_name + '_' + self.dataset)
         for i in range(2):
             self.agents[i].load(path / (tag + f'_p{i + 1}'))
 

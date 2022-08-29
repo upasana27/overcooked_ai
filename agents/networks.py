@@ -32,8 +32,11 @@ class GridEncoder(nn.Module):
 
         layers.append(nn.Flatten())
         self.encoder = nn.Sequential(*layers)
+        self.device = th.device('cuda' if th.cuda.is_available() else 'cpu')
+        self.to(self.device)
 
     def forward(self, obs):
+        obs = obs.to(self.device)
         return self.encoder(obs)
 
 class MLP(nn.Module):
@@ -48,8 +51,11 @@ class MLP(nn.Module):
         if num_layers > 1:
             layers += [nn.Linear(hidden_dim, output_dim), act()]
         self.mlp = nn.Sequential(*layers)
+        self.device = th.device('cuda' if th.cuda.is_available() else 'cpu')
+        self.to(self.device)
 
     def forward(self, obs):
+        obs = obs.to(self.device)
         return self.mlp(obs)
 
 

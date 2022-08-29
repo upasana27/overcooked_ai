@@ -230,34 +230,40 @@ class TypeBasedAdaptor(OAIAgent):
 
 
     @staticmethod
-    def create_models(args, bc_epochs=200, rl_epochs=200):
+    def create_models(args, bc_epochs=750, rl_epochs=200):
         # TODO add options to each kind of agent (e.g. reward shaping / A2C vs PPO for RL agents, using subtasks for BC Agents
         p1_agents = []
         p2_agents = []
+        device = th.device('cuda' if th.cuda.is_available() else 'cpu')
+
         # BC agents
         for dataset_file in ['tf_test_5_5.1.pickle', 'tf_test_5_5.2.pickle', 'tf_test_5_5.3.pickle',
                              'tf_test_5_5.4.pickle', 'tf_test_5_5.5.pickle', 'all_trials.pickle']:
             bct = BehavioralCloningTrainer(dataset_file, args)
-            bct.train_agents(epochs=bc_epochs)
+            bce = bc_epochs #(bc_epochs // 5) if dataset_file == 'all_trials.pickle' else bc_epochs
+            bct.train_agents(epochs=bce)
             bc_p1 = bct.get_agent(idx=0)
             bc_p2 = bct.get_agent(idx=1)
             p1_agents.append(bc_p1)
             p2_agents.append(bc_p2)
-        # RL double agent
-        rl_odat = OneDoubleAgentTrainer(args)
-        rl_odat.train_agents(epochs=rl_epochs)
-        p1_agents.append(rl_odat.get_agent(idx=0))
-        p2_agents.append(rl_odat.get_agent(idx=1))
+        
         # RL two single agents
-        rl_tsat = TwoSingleAgentsTrainer(args)
+        rl_tsat = TwoSingleAgentsTrainer(device, args)
         rl_tsat.train_agents(epochs=rl_epochs)
         p1_agents.append(rl_tsat.get_agent(idx=0))
         p2_agents.append(rl_tsat.get_agent(idx=1))
+
+        # RL double agent
+        rl_odat = OneDoubleAgentTrainer(device, args)
+        rl_odat.train_agents(epochs=rl_epochs)
+        p1_agents.append(rl_odat.get_agent(idx=0))
+        p2_agents.append(rl_odat.get_agent(idx=1))
+
         # RL single agents trained with BC partner
-        rl_sat = SingleAgentTrainer(bc_p2, 1, args)
+        rl_sat = SingleAgentTrainer(bc_p2, 1, device, args)
         rl_sat.train_agents(epochs=rl_epochs)
         p1_agents.append(rl_sat.get_agent(idx=0))
-        rl_sat = SingleAgentTrainer(bc_p1, 0, args)
+        rl_sat = SingleAgentTrainer(bc_p1, 0, device, args)
         rl_sat.train_agents(epochs=rl_epochs)
         p2_agents.append(rl_sat.get_agent(idx=1))
 
@@ -276,6 +282,7 @@ class TypeBasedAdaptor(OAIAgent):
 
     @staticmethod
     def run_full_episode(players, args):
+        args.horizon = 1200
         env = OvercookedGymEnv(layout=args.layout_name, encoding_fn=ENCODING_SCHEMES[args.encoding_fn], args=args)
         env.reset()
         for player in players:
