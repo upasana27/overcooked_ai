@@ -81,11 +81,11 @@ class BehaviouralCloningPolicy(nn.Module):
 
 
 class BehaviouralCloningAgent(nn.Module, OAIAgent):
-    def __init__(self, device, visual_obs_shape, agent_obs_shape, p_idx, args):
+    def __init__(self, device, visual_obs_shape, agent_obs_shape, p_idx, args, hidden_dim=256):
         super(BehaviouralCloningAgent, self).__init__()
         self.device = device
         self.use_subtasks = args.use_subtasks
-        self.policy = BehaviouralCloningPolicy(device, visual_obs_shape, agent_obs_shape, args)
+        self.policy = BehaviouralCloningPolicy(device, visual_obs_shape, agent_obs_shape, args, hidden_dim=hidden_dim)
         self.set_player_idx(p_idx)
         self.name = f'il_bc_p{p_idx + 1}'
         if self.use_subtasks:
@@ -109,10 +109,13 @@ class BehaviouralCloningAgent(nn.Module, OAIAgent):
         if self.use_subtasks:
             _, subtask_logits = logits
             # Update predicted subtask
-            if Action.INDEX_TO_ACTION[action] == Action.INTERACT:
+            if Action.INDEX_TO_ACTION[action] == Action.INTERACT or self.first_step:
                 ps = th.zeros_like(subtask_logits.squeeze())
-                ps[th.argmax(subtask_logits.detach().squeeze(), dim=-1)] = 1
+                subtask_id = th.argmax(subtask_logits.detach().squeeze(), dim=-1)
+                ps[subtask_id] = 1
                 self.curr_subtask = ps.float()
+                self.first_step = False
+                print('new subtask', Subtasks.IDS_TO_SUBTASKS[subtask_id.item()])
         return action, None
 
     def get_distribution(self, obs: th.Tensor):
@@ -125,6 +128,7 @@ class BehaviouralCloningAgent(nn.Module, OAIAgent):
         # Predicted subtask to perform next, stars as unknown
         unknown_task_id = th.tensor(Subtasks.SUBTASKS_TO_IDS['unknown']).to(self.device)
         self.curr_subtask = F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS)
+        self.first_step = True
 
     def save(self, path):
         Path(path).mkdir(parents=True, exist_ok=True)
@@ -161,8 +165,7 @@ class BehavioralCloningTrainer(OAITrainer):
         self.test_layout = args.layout_name
         self.train_dataset = OvercookedDataset(dataset, self.encoding_fn, self.train_layouts, args)
         self.grid_shape = self.train_dataset.grid_shape
-        self.eval_env = OvercookedGymEnv(layout=self.test_layout, encoding_fn=self.encoding_fn,
-                                         grid_shape=self.grid_shape, args=args)
+        self.eval_env = OvercookedGymEnv(layout=self.test_layout, grid_shape=self.grid_shape, args=args)
         obs = self.eval_env.get_obs()
         visual_obs_shape = obs['visual_obs'][0].shape
         agent_obs_shape = obs['agent_obs'][0].shape
@@ -238,8 +241,11 @@ class BehavioralCloningTrainer(OAITrainer):
                 # Train on subtask prediction task
                 pred_action, pred_subtask = preds
                 subtask_loss = self.subtask_criterion(pred_subtask, next_subtask[:, i])
+
                 subtask_mask = action[:, i] == Action.ACTION_TO_INDEX[Action.INTERACT]
-                loss_mask = th.logical_or(subtask_mask, th.rand_like(subtask_loss, device=self.device) > 0.95)
+                loss_mask = subtask_mask #th.logical_or(subtask_mask, th.rand_like(subtask_loss, device=self.device) > 0.95)
+                print(subtask_loss, subtask_mask)
+                print(pred_subtask, next_subtask[:, i])
                 subtask_loss = th.mean(subtask_loss * loss_mask)
                 tot_loss += th.mean(subtask_loss)
                 metrics[f'p{i}_subtask_loss'] = subtask_loss.item()
@@ -301,16 +307,14 @@ class BehavioralCloningTrainer(OAITrainer):
 
     def save(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'IL_agents' / self.test_layout
-        tag = tag or self.args.exp_name
-        tag += '_' + self.dataset
+        tag = tag or (self.args.exp_name + '_' + self.dataset.remove('.pickle'))
         for i in range(2):
             self.agents[i].save(path / (tag + f'_p{i + 1}'))
         return path, tag
 
     def load(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'IL_agents' / self.test_layout
-        tag = tag or self.args.exp_name
-        tag += '_' + self.dataset
+        tag = tag or (self.args.exp_name + '_' + self.dataset.remove('.pickle'))
         for i in range(2):
             self.agents[i].load(path / (tag + f'_p{i + 1}'))
 
@@ -319,10 +323,15 @@ if __name__ == '__main__':
     args = get_arguments()
     eval_only = False
     if eval_only:
-        bct = BehavioralCloningTrainer(encoding_fn, 'all', 'asymmetric_advantages', args, vis_eval=True)
+        bct = BehavioralCloningTrainer('tf_test_5_5.2.pickle', args, vis_eval=True)
         bct.load()
         bct.evaluate(10)
     else:
+        args.use_subtasks = True
+        args.batch_size = 4
+        args.layout_name = 'tf_test_5_5'
+        bct = BehavioralCloningTrainer('tf_test_5_5.2.pickle', args, vis_eval=True)
+        bct.train_agents()
         # bct = BehavioralCloningTrainer(encoding_fn, 'all', 'asymmetric_advantages', args, vis_eval=False)
         # bct.training('all')
         # del bct
@@ -331,9 +340,9 @@ if __name__ == '__main__':
         # bct.training('all_no_subtask')
         # del bct
 
-        bct = BehavioralCloningTrainer(encoding_fn, ['asymmetric_advantages'], 'asymmetric_advantages', args, vis_eval=False)
-        bct.train_agents('single')
-        del bct
+        # bct = BehavioralCloningTrainer(encoding_fn, ['asymmetric_advantages'], 'asymmetric_advantages', args, vis_eval=False)
+        # bct.train_agents('single')
+        # del bct
 
         # bct = BehavioralCloningTrainer(encoding_fn, ['asymmetric_advantages'], 'asymmetric_advantages', args, vis_eval=False, use_subtasks=False)
         # bct.training('single_no_subtask')

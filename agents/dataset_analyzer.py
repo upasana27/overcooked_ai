@@ -9,7 +9,7 @@ from subtasks import Subtasks, calculate_completed_subtask
 
 layouts = 'all' #['asymmetric_advantages'] # 'all'
 data_path = './data/generated_data' # args.base_dir / args.data_path / args.dataset
-filename = 'tf_test_5_5.1.pickle' #'2019_hh_trials_all.pickle' 'all_trials.pickle' 'tf_test_5_5.1.pickle'
+filename = 'tf_test_5_5.2.pickle' #'2019_hh_trials_all.pickle' 'all_trials.pickle' 'tf_test_5_5.1.pickle'
 main_trials = pd.read_pickle(Path(data_path) / filename)
 if filename == '2019_hh_trials_all.pickle':
     main_trials.loc[main_trials.layout_name == 'random0', 'layout_name'] = 'forced_coordination'

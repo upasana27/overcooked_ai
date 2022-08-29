@@ -39,7 +39,7 @@ class SingleAgentWrapper(OAIAgent):
         self.agent.load(path + f'_p{self.p_idx + 1}')
 
 class TwoSingleAgentsTrainer(OAITrainer):
-    def __init__(self, args):
+    def __init__(self, device, args):
         super(TwoSingleAgentsTrainer, self).__init__(args)
         self.args = args
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]

@@ -11,8 +11,14 @@ import matplotlib.pyplot as plt
 from os import listdir, getcwd
 from os.path import isfile, join
 import re
+import torch as th
 
-
+from agent import OAIAgent
+from behavioral_cloning import BehaviouralCloningAgent
+from adaptable_agents import SubtaskAdaptor
+from arguments import get_arguments
+from overcooked_gym_env import OvercookedGymEnv
+from state_encodings import ENCODING_SCHEMES
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld, Direction, Action, OvercookedState
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
 from overcooked_ai_py.agents.agent import StayAgent, RandomAgent, AgentFromPolicy, GreedyHumanModel
@@ -20,6 +26,7 @@ from overcooked_ai_py.agents.agent import StayAgent, RandomAgent, AgentFromPolic
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
 from overcooked_ai_py.mdp.layout_generator import LayoutGenerator
 from overcooked_ai_py.utils import load_dict_from_file
+
 
 
 no_counters_params = {
@@ -70,21 +77,30 @@ def str_to_state(state):
         state = json.loads(state)
     return OvercookedState.from_dict(state)
 
-class DataCollector:
+class App:
     """Class to run an Overcooked Gridworld game, leaving one of the agents as fixed.
     Useful for debugging. Most of the code from http://pygametutorials.wikidot.com/tutorials-basic."""
-    def __init__(self, data_path, layout_name, slowmo_rate=1, traj_file=None):
+    def __init__(self, args, agents=None, traj_file=None, slowmo_rate=1):
         self._running = True
         self._display_surf = None
-        self.layout_name = layout_name
-        self.env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(self.layout_name), horizon=1200)
-        self.agent = None
+        self.args = args
+        self.layout_name = args.layout_name
+        self.env = OvercookedGymEnv(layout=args.layout_name, args=args)
+        self.grid_shape = self.env.grid_shape
+        if traj_file is not None:
+            self.mode = 'replay'
+        elif agents is not None:
+            self.mode = 'play'
+            self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
+        else:
+            self.mode = 'collect_data'
+        self.agents = agents
         self.slowmo_rate = slowmo_rate
-        self.fps = 600 // slowmo_rate
+        self.fps = 300 // slowmo_rate
         self.score = 0
         self.curr_tick = 0
         self.joint_action = [None, None]
-        self.data_path = data_path
+        self.data_path = args.base_dir / args.data_path
         self.data_path.mkdir(parents=True, exist_ok=True)
         self.collect_trajectory = not bool(traj_file)
         if self.collect_trajectory:
@@ -101,7 +117,7 @@ class DataCollector:
 
     def on_init(self):
         pygame.init()
-        surface = StateVisualizer().render_state(self.env.state, grid=self.env.mdp.terrain_mtx)
+        surface = StateVisualizer().render_state(self.env.state, grid=self.env.env.mdp.terrain_mtx)
         self.window = pygame.display.set_mode(surface.get_size(), HWSURFACE | DOUBLEBUF | RESIZABLE)
         self.window.blit(surface, (0, 0))
         pygame.display.flip()
@@ -109,7 +125,6 @@ class DataCollector:
 
     def on_event(self, event, pidx):
         if event.type == pygame.KEYDOWN:
-            print(event)
             pressed_key = event.dict['key']
             action = None
 
@@ -125,14 +140,20 @@ class DataCollector:
                 action = Action.INTERACT
             elif pressed_key == K_s:
                 action = Action.STAY
-            self.joint_action[pidx] = action
+            else:
+                action = Action.STAY
+            self.joint_action[pidx] = Action.ACTION_TO_INDEX[action]
 
         if event.type == pygame.QUIT:
             self._running = False
 
     def step_env(self, joint_action):
         prev_state = self.env.state
-        new_state, reward, done, info = self.env.step(joint_action)
+        obs, reward, done, info = self.env.step(joint_action)
+        new_state = self.env.state
+        for i in range(2):
+            if isinstance(self.agents[i], OAIAgent):
+                self.agents[i].step(new_state, joint_action)
         # prev_state, joint_action, info = super(OvercookedPsiturk, self).apply_actions()
 
         # Log data to send to psiturk client
@@ -146,7 +167,7 @@ class DataCollector:
             "score" : self.score,
             "time_elapsed" : self.curr_tick / self.fps,
             "cur_gameloop" : self.curr_tick,
-            "layout" : self.env.mdp.terrain_mtx,
+            "layout" : self.env.env.mdp.terrain_mtx,
             "layout_name" : self.layout_name,
             "trial_id" : 100 # TODO this is just for testing self.trial_id,
             # "player_0_id" : self.agents[0],
@@ -161,24 +182,21 @@ class DataCollector:
     def on_loop(self):
         # for i in range(2):
         #     self.joint_action[i] = self.joint_action[i] or Action.STAY
-        assert(all(self.joint_action))
+        # print(self.joint_action)
+        assert(all([action is not None for action in self.joint_action]))
+        done = self.step_env(self.joint_action)
+        self.joint_action = [None, None]
+        self.curr_tick += 1
 
-        if all(self.joint_action):
-            done = self.step_env(self.joint_action)
-            self.joint_action = [None, None]
-            self.curr_tick += 1
-
-            if done:
-                self._running = False
-
+        if done:
+            self._running = False
 
     def on_render(self, pidx=None):
         p0_action = Action.ACTION_TO_INDEX[self.joint_action[0]] if pidx == 1 else None
-        surface = StateVisualizer().render_state(self.env.state, grid=self.env.mdp.terrain_mtx, pidx=pidx, hud_data={"timestep": self.curr_tick}, p0_action=p0_action)
+        surface = StateVisualizer().render_state(self.env.state, grid=self.env.env.mdp.terrain_mtx, pidx=pidx, hud_data={"timestep": self.curr_tick}, p0_action=p0_action)
         self.window = pygame.display.set_mode(surface.get_size(), HWSURFACE | DOUBLEBUF | RESIZABLE)
         self.window.blit(surface, (0, 0))
         pygame.display.flip()
-
 
     def on_cleanup(self):
         pygame.quit()
@@ -221,11 +239,40 @@ class DataCollector:
                 self.curr_tick = 0
         self.on_cleanup()
 
+    def play_execution(self):
+        if self.on_init() == False:
+            self._running = False
+        sleep_time = 1000 // self.fps
+        for i in range(2):
+            if isinstance(self.agents[i], OAIAgent):
+                self.agents[i].reset(self.env.state, i)
+        while (self._running):
+            self.joint_action = [None, None]
+            for i in range(2):
+                if self.agents[i] == 'human':
+                    self.on_render(pidx=i)
+                    while self.joint_action[i] is None:
+                        for event in pygame.event.get():
+                            self.on_event(event, i)
+                        pygame.event.pump()
+                else:
+                    obs = self.env.get_obs(i)
+                    self.joint_action[i] = self.agents[i].predict(obs)[0].squeeze().detach().item()
+                    pygame.time.wait(sleep_time)
+            self.on_render()
+            self.on_loop()
+
+        self.on_cleanup()
+        print(f'Trial finished in {self.curr_tick} steps with total reward {self.score}')
+
     def on_execute(self):
-        if self.collect_trajectory:
+        print(self.mode)
+        if self.mode == 'collect_data':
             self.collection_execution()
-        else:
+        elif self.mode == 'replay':
             self.replay_execution()
+        elif self.mode == 'play':
+            self.play_execution()
 
     def save_trajectory(self):
         df = pd.DataFrame(self.trajectory)
@@ -269,24 +316,47 @@ if __name__ == "__main__":
     -> BC
     python overcooked_interactive.py -t bc -r simple_bc_test_seed4
     """
-    parser = ArgumentParser()
+
     # parser.add_argument("-t", "--type", dest="type",
     #                     help="type of run, (i.e. pbt, bc, ppo, etc)", required=True)
     # parser.add_argument("-r", "--run_dir", dest="run",
     #                     help="tag of run dir in data/*_runs/", required=True)
-    parser.add_argument("-no_slowed", "--no_slowed_down", dest="slow",
-                        help="Slow down time for human to simulate actual test time", action='store_false')
-    parser.add_argument("-s", "--seed", dest="seed", required=False, default=0)
-    parser.add_argument("-a", "--agent_num", dest="agent_num", default=0)
-    parser.add_argument("-i", "--idx", dest="idx", default=0)
-    parser.add_argument('--combine', action='store_true', help='Combine all previous trials')
+    additional_args = [
+        ('--combine', {'action': 'store_true', 'help': 'Combine all previous trials'}),
+        ('--traj-file', {'type': str, 'default': None, 'help': 'trajectory file to run'}),
+        ('--agent-file', {'type': str, 'default': None, 'help': 'agent file to load'}),
+    ]
+    # parser.add_argument("-no_slowed", "--no_slowed_down", dest="slow",
+    #                     help="Slow down time for human to simulate actual test time", action='store_false')
+    # parser.add_argument("-s", "--seed", dest="seed", required=False, default=0)
+    # parser.add_argument("-a", "--agent_num", dest="agent_num", default=0)
+    # parser.add_argument("-i", "--idx", dest="idx", default=0)
+    # parser.add_argument('--combine', action='store_true', help='Combine all previous trials')
+    # parser.add_argument('--traj-file', type=str, default=None, help='trajectory file to run') # '2019_hh_trials_all.pickle'
+    # parser.add_argument('--agent-file', type=str, default=None, help='trajectory file to run')
 
-    args = parser.parse_args()
-    data_path = Path(getcwd()) / 'data' #/ 'generated_data'
+
+    args = get_arguments(additional_args)
+
+    agents = None
+    data_path = args.base_dir / args.data_path
+    if args.agent_file is not None:
+        device = th.device('cuda' if th.cuda.is_available() else 'cpu')
+        env = OvercookedGymEnv(layout=args.layout_name, args=args)
+        obs = env.get_obs()
+        visual_obs_shape = obs['visual_obs'][0].shape
+        agent_obs_shape = obs['agent_obs'][0].shape
+        agents = [SubtaskAdaptor(device, visual_obs_shape, agent_obs_shape, 0, args),
+                  SubtaskAdaptor(device, visual_obs_shape, agent_obs_shape, 1, args)]
+        for i, agent in enumerate(agents):
+            path = args.base_dir / 'agent_models' / 'IL_agents' / args.layout_name / (args.agent_file + f'_p{i + 1}')
+            agent.load(path)
+
+        agents[0] = 'human'
 
     if args.combine:
-        DataCollector.combine_df(data_path)
+        App.combine_df(data_path)
     else:
         layout_name = 'asymmetric_advantages'
-        dc = DataCollector(data_path, layout_name, slowmo_rate=8, traj_file='2019_hh_trials_all.pickle')
+        dc = App(args, traj_file=args.traj_file, agents=agents, slowmo_rate=8, )
         dc.on_execute()

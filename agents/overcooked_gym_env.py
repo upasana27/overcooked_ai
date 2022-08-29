@@ -15,8 +15,7 @@ from stable_baselines3.common.env_checker import check_env
 class OvercookedGymEnv(Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, p1_agent=None, p2_agent=None, layout=None, encoding_fn=None, grid_shape=None,
-                 shape_rewards=False, args=None):
+    def __init__(self, p1_agent=None, p2_agent=None, layout=None, grid_shape=None, shape_rewards=False, args=None):
         self.agents = [p1_agent, p2_agent]
         self.layout = layout
         self.env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(layout), horizon=args.horizon)

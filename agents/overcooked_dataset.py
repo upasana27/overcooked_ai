@@ -92,8 +92,10 @@ class OvercookedDataset(Dataset):
         # Calculate class weights for cross entropy
         self.action_weights = np.zeros(6)
         for action in Action.ALL_ACTIONS:
-            self.action_weights[Action.ACTION_TO_INDEX[action]] = self.action_ratios[action]
+            self.action_weights[Action.ACTION_TO_INDEX[action]] = self.action_ratios[action] + 1 # Avoids nans if there are no subtasks of that type
+        print(self.action_weights)
         self.action_weights = 1.0 / self.action_weights
+        print(self.action_weights)
         self.action_weights = len(Action.ALL_ACTIONS) * self.action_weights / self.action_weights.sum()
 
     def get_action_weights(self):

@@ -5,8 +5,12 @@ from rl_agents import TwoSingleAgentsTrainer, OneDoubleAgentTrainer, SingleAgent
 from subtasks import Subtasks, calculate_completed_subtask
 from state_encodings import ENCODING_SCHEMES
 
+from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
+from overcooked_ai_py.mdp.actions import Action
+
 import numpy as np
 import torch as th
+from torch.distributions.categorical import Categorical
 import torch.nn.functional as F
 from typing import Tuple, Union
 
@@ -19,10 +23,16 @@ class SubtaskAdaptor(BehaviouralCloningAgent):
         self.subtask_adaptor = None  # TODO
         self.trajectory = []
         self.terrain = OvercookedGridworld.from_layout_name(args.layout_name).terrain_mtx
+        for i in range(len(self.terrain)):
+            self.terrain[i] = ''.join(self.terrain[i])
+        self.terrain = str(self.terrain)
         self.agent_subtask_counts = np.zeros((2, Subtasks.NUM_SUBTASKS))
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.subtask_selection = args.subtask_selection
+        if self.subtask_selection == 'weighted':
+            self.init_subtask_weighting()
         self.name = f'subtask_adaptor_{self.subtask_selection}'
+        self.reset(None, idx)
 
     def subtask_adaptor_tabular_rl(self, subtask_logits):
         """
@@ -82,10 +92,42 @@ class SubtaskAdaptor(BehaviouralCloningAgent):
         self.sup_waiting_dec = 0.1  # 2d
         self.com_waiting_inc = 0.2  # 3d
         self.successful_support_task_reward = 1
+        self.agent_objects = {}
+        self.teammate_objects = {}
+
+    def doable_subtasks(self, state):
+        subtask_mask = np.zeros(Subtasks.NUM_SUBTASKS)
+        if state.players[self.p_idx].held_object is None:
+            subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_onion_from_dispenser']] = 1
+            subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_plate_from_dish_rack']] = 1
+            for obj in self.curr_state.objects.values():
+                if obj.name == 'onion':
+                    subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_onion_from_counter']] = 1
+                elif obj.name == 'dish':
+                    subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_plate_from_counter']] = 1
+                elif obj.name == 'soup' and obj.is_ready:
+                    subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_soup_from_counter']] = 1
+        elif state.players[self.p_idx].held_object.name == 'onion':
+            subtask_mask[Subtasks.SUBTASKS_TO_IDS['put_onion_in_pot']] = 1
+            subtask_mask[Subtasks.SUBTASKS_TO_IDS['put_onion_closer']] = 1
+        elif state.players[self.p_idx].held_object.name == 'dish':
+            subtask_mask[Subtasks.SUBTASKS_TO_IDS['put_plate_closer']] = 1
+            for obj in self.curr_state.objects.values():
+                if not obj.is_idle:
+                    subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_soup']] = 1
+        elif state.players[self.p_idx].held_object.name == 'soup':
+            subtask_mask[Subtasks.SUBTASKS_TO_IDS['serve_soup']] = 1
+            subtask_mask[Subtasks.SUBTASKS_TO_IDS['put_soup_closer']] = 1
+        print('Doable subtasks:')
+        for i in range(len(subtask_mask)):
+            if subtask_mask[i] == 1:
+                print(Subtasks.IDS_TO_SUBTASKS[i])
+        return subtask_mask
 
     def update_subtask_weighting(self, prev_state, curr_state):
-        prev_objects = prev_state.objects
-        curr_objects = curr_state.objects
+        prev_objects = prev_state.objects.values()
+        curr_objects = curr_state.objects.values()
+        # TODO objects are only tracked by name and position, so checking equality fails because picking something up changes the objects position
         # 2.b
         for s_s in self.sup_subtask:
             self.subtask_logits_weights[Subtasks.SUBTASKS_TO_IDS[s_s]] += self.sup_base_inc
@@ -99,8 +141,8 @@ class SubtaskAdaptor(BehaviouralCloningAgent):
                 elif object == prev_state.players[self.t_idx].held_object:
                     print(f'Teammate placed {object}')
                     self.teammate_objects[object] = 0
-                else:
-                    raise ValueError(f'Object {object} has been put down, but did not belong to either player')
+                # else:
+                #     raise ValueError(f'Object {object} has been put down, but did not belong to either player')
             # Objects that have not moved since the previous time step
             else:
                 if object in self.agent_objects:
@@ -135,7 +177,7 @@ class SubtaskAdaptor(BehaviouralCloningAgent):
                     else:
                         del self.teammate_objects[object]
                 else:
-                    raise ValueError(f'Object {object} has been picked, but does not belong to either player')
+                    raise ValueError(f'Object {object} has been picked up, but does not belong to either player')
 
                 # Find out if there are any remaining objects of the same type left
                 last_object_of_this_type = True
@@ -147,7 +189,9 @@ class SubtaskAdaptor(BehaviouralCloningAgent):
                 if last_object_of_this_type:
                     subtask_id = Subtasks.SUBTASKS_TO_IDS[self.com_obj_to_subtask[object.name]]
                     self.subtask_logits_weights[subtask_id] = 0
+
         self.subtask_logits_weights = np.clip(self.subtask_logits_weights, 0, 10)
+        # self.subtask_logits_weights *= self.doable_subtasks(curr_state)
 
     def subtask_adaptor_subtask_weighting(self, subtask_logits):
         """
@@ -169,22 +213,35 @@ class SubtaskAdaptor(BehaviouralCloningAgent):
         :return:
         """
         assert self.subtask_logits_weights is not None
-        return subtask_logits * self.subtask_logits_weights
+        # print('?')
+        # print(subtask_logits.detach())
+        # print(self.subtask_logits_weights)
+        # print(self.doable_subtasks(self.curr_state))
+        # print('!')
+        subtask_probs = F.softmax(subtask_logits)
+        return subtask_probs.detach() * self.subtask_logits_weights * self.doable_subtasks(self.curr_state)
 
     def update_subtask_logits(self, subtask_logits):
         # TODO update logits based on some adaptation
-        pass
+        if self.subtask_selection == 'weighted':
+            subtask_logits = self.subtask_adaptor_subtask_weighting(subtask_logits)
+            return subtask_logits
 
     def predict(self, obs, sample=True):
+        obs = [(th.tensor(o, dtype=th.float32).to(self.device) if not isinstance(o, th.Tensor) else o.to(self.device))
+               for o in [obs['visual_obs'], obs['agent_obs']]]
         obs = [o.unsqueeze(dim=0).to(self.device) for o in (*obs, self.curr_subtask)]
         action_logits, subtask_logits = self.forward(obs)
         action = Categorical(logits=action_logits).sample() if sample else th.argmax(action_logits, dim=-1)
         # Update predicted subtask
-        if Action.INDEX_TO_ACTION[action] == Action.INTERACT:
-            adapted_subtask_logits = self.subtask_adaptor(subtask_logits)
+        if Action.INDEX_TO_ACTION[action] == Action.INTERACT or self.first_step:
+            adapted_subtask_logits = self.update_subtask_logits(subtask_logits)
+            subtask_id = th.argmax(adapted_subtask_logits.squeeze(), dim=-1)
             ps = th.zeros_like(adapted_subtask_logits.squeeze())
-            ps[th.argmax(adapted_subtask_logits.detach().squeeze(), dim=-1)] = 1
+            ps[subtask_id] = 1
             self.adapted_subtask_logits = ps.float()
+            self.first_step = False
+            print('new subtask', Subtasks.IDS_TO_SUBTASKS[subtask_id.item()])
         return action
 
     def step(self, new_state, joint_action):
@@ -193,9 +250,13 @@ class SubtaskAdaptor(BehaviouralCloningAgent):
         interact_id = Action.ACTION_TO_INDEX[Action.INTERACT]
         for i in range(2):
             if joint_action[i] == interact_id:
+                print(self.terrain)
                 subtask_id = calculate_completed_subtask(self.terrain, self.curr_state, new_state, i)
                 self.agent_subtask_counts[i][subtask_id] += 1
         self.trajectory.append(joint_action)
+        if self.subtask_selection == 'weighted':
+            self.update_subtask_weighting(self.curr_state, new_state)
+        self.curr_state = new_state
 
     def reset(self, state, player_idx):
         super().reset(state, player_idx)
@@ -204,14 +265,7 @@ class SubtaskAdaptor(BehaviouralCloningAgent):
         # Predicted subtask to perform next, starts as unknown
         unknown_task_id = th.tensor(Subtasks.SUBTASKS_TO_IDS['unknown']).to(self.device)
         self.curr_subtask = F.one_hot(unknown_task_id, num_classes=Subtasks.NUM_SUBTASKS)
-
-    def save(self, path: str):
-        """All models should be pretrained, so saving shouldn't be necessary"""
-        pass
-
-    def load(self, path: str):
-        """All models should be pretrained and passed in already loaded, so loading shouldn't be necessary"""
-        pass
+        self.first_step = True
 
 
 class TypeBasedAdaptor(OAIAgent):

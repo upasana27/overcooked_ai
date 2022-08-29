@@ -15,6 +15,9 @@ class OAIAgent(ABC):
         self.policy = None
         self.name = 'WARNING_NAME_IS_NOT_PROPERLY_SET'
 
+    def set_encoding_fn(self, encoding_fn):
+        self.encoding_fn = encoding_fn
+
     def set_name(self, name):
         self.name = name
 
