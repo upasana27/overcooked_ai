@@ -53,6 +53,21 @@ class MLP(nn.Module):
         return self.mlp(obs)
 
 
+# LSTM TASK
+class OAISinglePlayerLSTMFeatureExtractor(BaseFeaturesExtractor):
+    """
+        :param observation_space: (gym.Space)
+        :param features_dim: (int) Number of features extracted.
+            This corresponds to the number of unit for the last layer.
+        """
+
+    def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = 256):
+        pass
+
+    def forward(self, observations: th.Tensor) -> th.Tensor:
+        pass
+
+
 class OAISinglePlayerFeatureExtractor(BaseFeaturesExtractor):
     """
         :param observation_space: (gym.Space)

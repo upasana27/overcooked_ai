@@ -11,6 +11,23 @@ from networks import OAISinglePlayerFeatureExtractor, OAIDoublePlayerFeatureExtr
 from overcooked_gym_env import OvercookedGymEnv
 from state_encodings import ENCODING_SCHEMES
 
+# LSTM TASK
+class TwoSingleLSTMAgentTrainer(OAITrainer):
+    def __init__(self, args):
+        super(SingleLSTMAgentTrainer, self).__init__(args)
+        pass
+
+    def train_agents(self, epochs=1000, exp_name=None):
+        pass
+    def get_agent(self, idx):
+        pass
+
+    def save(self, path=None, tag=None):
+        pass
+
+    def load(self, path=None, tag=None):
+        pass
+
 
 class SingleAgentWrapper(OAIAgent):
     def __init__(self, agent, idx):
@@ -62,7 +79,7 @@ class TwoSingleAgentsTrainer(OAITrainer):
 
     def train_agents(self, epochs=1000, exp_name=None):
         exp_name = exp_name or self.args.exp_name
-        run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
+        run = wandb.init(project="overcooked_ai_test", entity=self.args.wandb_ent, dir=str(self.args.base_dir / 'wandb'),
                          reinit=True, name=exp_name + '_rl_two_single_agents', mode=self.args.wandb_mode)
         for i in range(2):
             self.agents[i].policy.train()
@@ -127,7 +144,7 @@ class SingleAgentTrainer(OAITrainer):
 
     def train_agents(self, epochs=1000, exp_name=None):
         exp_name = exp_name or self.args.exp_name
-        run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
+        run = wandb.init(project="overcooked_ai_test", entity=self.args.wandb_ent, dir=str(self.args.base_dir / 'wandb'),
                          reinit=True, name=exp_name + '_rl_single_agent', mode=self.args.wandb_mode)
         for i in range(2):
             self.agents[i].policy.train()
@@ -208,7 +225,7 @@ class OneDoubleAgentTrainer(OAITrainer):
 
     def train_agents(self, epochs=1000, exp_name=None):
         exp_name = exp_name or self.args.exp_name
-        run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
+        run = wandb.init(project="overcooked_ai_test", entity=self.args.wandb_ent, dir=str(self.args.base_dir / 'wandb'),
                          reinit=True, name=exp_name + '_rl_double_agent', mode=self.args.wandb_mode)
         self.agent.policy.train()
         best_cum_rew = 0
@@ -259,7 +276,9 @@ class OneDoubleAgentTrainer(OAITrainer):
 if __name__ == '__main__':
     args = get_arguments()
     oda = OneDoubleAgentTrainer(args)
-    oda.train_agents(epochs=100)
+    oda.train_agents(epochs=200)
     tsa = TwoSingleAgentsTrainer(args)
-    tsa.train_agents(epochs=100)
+    tsa.train_agents(epochs=200)
+    lstm = TwoSingleLSTMAgentTrainer(args)
+    lstm.train_agents(epochs=200)
 

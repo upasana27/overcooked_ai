@@ -34,6 +34,8 @@ def get_arguments(additional_args=[]):
                         help='number of workers for pytorch train_dataloader (default: 4)')
     parser.add_argument('--wandb-mode', type=str, default='online',
                         help='Wandb mode. One of ["online", "offline", "disabled"')
+    parser.add_argument('--wandb-ent', type=str, default='stephaneao',
+                        help='Wandb entity to log to.')
     for parser_arg, parser_kwargs in additional_args:
         parser.add_argument(parser_arg, **parser_kwargs)
 

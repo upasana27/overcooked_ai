@@ -283,7 +283,7 @@ class BehavioralCloningTrainer(OAITrainer):
     def train_agents(self, epochs=100, exp_name=None):
         """ Training routine """
         exp_name = exp_name or self.args.exp_name
-        run = wandb.init(project="overcooked_ai_test", entity="stephaneao", dir=str(self.args.base_dir / 'wandb'),
+        run = wandb.init(project="overcooked_ai_test", entity=self.args.wandb_ent, dir=str(self.args.base_dir / 'wandb'),
                          reinit=True, name='_'.join([exp_name, self.dataset, self.test_layout, 'bc']),
                          mode=self.args.wandb_mode)
 
