@@ -90,7 +90,7 @@ class OvercookedDataset(Dataset):
         self.add_subtasks()
 
         # Calculate class weights for cross entropy
-        self.action_weights = np.zeros(6)
+        self.action_weights = np.ones(6)
         for action in Action.ALL_ACTIONS:
             self.action_weights[Action.ACTION_TO_INDEX[action]] = self.action_ratios[action] + 1 # Avoids nans if there are no subtasks of that type
         print(self.action_weights)
@@ -175,13 +175,11 @@ class OvercookedDataset(Dataset):
         assert not (self.main_trials['p2_next_subtask'].isna().any())
 
         # Calculate subtask ratios to be used as weights in a cross entropy loss
-        self.subtask_weights = np.zeros(Subtasks.NUM_SUBTASKS)
+        self.subtask_weights = np.ones(Subtasks.NUM_SUBTASKS)
         for i in range(2):
             counts = self.main_trials[f'p{i+1}_next_subtask'].value_counts().to_dict()
-            print(f'Player {i+1} subtask splits')
             for k, v in counts.items():
                 self.subtask_weights[k] += v
-                print(f'{Subtasks.IDS_TO_SUBTASKS[k]}: {v}')
         self.subtask_weights = 1.0 / self.subtask_weights
         self.subtask_weights = Subtasks.NUM_SUBTASKS * self.subtask_weights / self.subtask_weights.sum()
 

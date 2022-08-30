@@ -719,12 +719,15 @@ class OvercookedState(object):
             objects={}, bonus_orders=bonus_orders, all_orders=all_orders)
 
     @classmethod
-    def from_player_positions(cls, player_positions, bonus_orders=[], all_orders=[]):
+    def from_player_positions(cls, player_positions, bonus_orders=[], all_orders=[], random_orientation=False):
         """
         Make a dummy OvercookedState with no objects and with players facing
         North based on the passed in player positions and order list
         """
-        dummy_pos_and_or = [(pos, Direction.NORTH) for pos in player_positions]
+        if random_orientation:
+            dummy_pos_and_or = [(pos, Direction.ALL_DIRECTIONS[np.random.choice(len(Direction.ALL_DIRECTIONS))]) for pos in player_positions]
+        else:
+            dummy_pos_and_or = [(pos, Direction.NORTH) for pos in player_positions]
         return cls.from_players_pos_and_or(dummy_pos_and_or, bonus_orders, all_orders)
 
     def deepcopy(self):
@@ -1012,7 +1015,7 @@ class OvercookedGridworld(object):
         )
         return start_state
 
-    def get_random_start_state_fn(self, random_start_pos=False, rnd_obj_prob_thresh=0.0):
+    def get_random_start_state_fn(self, random_start_pos=False, random_orientation=False, rnd_obj_prob_thresh=0.0):
         def start_state_fn():
             if random_start_pos:
                 valid_positions = self.get_valid_joint_player_positions()
@@ -1020,7 +1023,7 @@ class OvercookedGridworld(object):
             else:
                 start_pos = self.start_player_positions
 
-            start_state = OvercookedState.from_player_positions(start_pos, bonus_orders=self.start_bonus_orders, all_orders=self.start_all_orders)
+            start_state = OvercookedState.from_player_positions(start_pos, bonus_orders=self.start_bonus_orders, all_orders=self.start_all_orders, random_orientation=random_orientation)
 
             if rnd_obj_prob_thresh == 0:
                 return start_state

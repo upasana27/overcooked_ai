@@ -25,7 +25,7 @@ NUM_ACTIONS = 6  # UP, DOWN, LEFT, RIGHT, INTERACT, NOOP
 
 
 class BehaviouralCloningPolicy(nn.Module):
-    def __init__(self, device, visual_obs_shape, agent_obs_shape, args, act=nn.ReLU, hidden_dim=256):
+    def __init__(self, visual_obs_shape, agent_obs_shape, args, act=nn.ReLU, hidden_dim=256):
         """
         NN network for a behavioral cloning agent
         :param visual_obs_shape: Shape of any grid-like input to be passed into a CNN
@@ -35,7 +35,7 @@ class BehaviouralCloningPolicy(nn.Module):
         :param hidden_dim: hidden dimension to use in NNs
         """
         super(BehaviouralCloningPolicy, self).__init__()
-        self.device = device
+        self.device = args.device
         # NOTE The policy only uses subtasks as an input. Policies only output actions
         self.use_subtasks = args.use_subtasks
         self.use_visual_obs = np.prod(visual_obs_shape) > 0
@@ -81,11 +81,11 @@ class BehaviouralCloningPolicy(nn.Module):
 
 
 class BehaviouralCloningAgent(nn.Module, OAIAgent):
-    def __init__(self, device, visual_obs_shape, agent_obs_shape, p_idx, args, hidden_dim=256):
+    def __init__(self, visual_obs_shape, agent_obs_shape, p_idx, args, hidden_dim=256):
         super(BehaviouralCloningAgent, self).__init__()
-        self.device = device
+        self.device = args.device
         self.use_subtasks = args.use_subtasks
-        self.policy = BehaviouralCloningPolicy(device, visual_obs_shape, agent_obs_shape, args, hidden_dim=hidden_dim)
+        self.policy = BehaviouralCloningPolicy(visual_obs_shape, agent_obs_shape, args, hidden_dim=hidden_dim)
         self.set_player_idx(p_idx)
         self.name = f'il_bc_p{p_idx + 1}'
         if self.use_subtasks:
@@ -165,13 +165,13 @@ class BehavioralCloningTrainer(OAITrainer):
         self.test_layout = args.layout_name
         self.train_dataset = OvercookedDataset(dataset, self.encoding_fn, self.train_layouts, args)
         self.grid_shape = self.train_dataset.grid_shape
-        self.eval_env = OvercookedGymEnv(layout=self.test_layout, grid_shape=self.grid_shape, args=args)
+        self.eval_env = OvercookedGymEnv(grid_shape=self.grid_shape, args=args)
         obs = self.eval_env.get_obs()
         visual_obs_shape = obs['visual_obs'][0].shape
         agent_obs_shape = obs['agent_obs'][0].shape
         self.agents = (
-            BehaviouralCloningAgent(self.device, visual_obs_shape, agent_obs_shape, 0, args),
-            BehaviouralCloningAgent(self.device, visual_obs_shape, agent_obs_shape, 1, args)
+            BehaviouralCloningAgent(visual_obs_shape, agent_obs_shape, 0, args),
+            BehaviouralCloningAgent(visual_obs_shape, agent_obs_shape, 1, args)
         )
 
         if len(self.train_layouts) > 0:
@@ -185,7 +185,7 @@ class BehavioralCloningTrainer(OAITrainer):
         if self.visualize_evaluation:
             self.eval_env.setup_visualization()
 
-    def evaluate(self, num_trials=10, sample=True):
+    def evaluate(self, num_trials=1, sample=True):
         """
         Evaluate agent on <num_trials> trials. Returns average true reward and average shaped reward trials.
         :param num_trials: Number of trials to run
@@ -219,6 +219,8 @@ class BehavioralCloningTrainer(OAITrainer):
                 trial_reward += np.sum(info['sparse_r_by_agent'])
                 trial_shaped_r += np.sum(info['shaped_r_by_agent'])
                 timestep += 1
+                if (timestep+1) % 200 == 0:
+                    print(f'Reward of {trial_reward} at step {timestep}')
             average_reward.append(trial_reward)
             shaped_reward.append(trial_shaped_r)
         return np.mean(average_reward), np.mean(shaped_reward)
@@ -244,8 +246,6 @@ class BehavioralCloningTrainer(OAITrainer):
 
                 subtask_mask = action[:, i] == Action.ACTION_TO_INDEX[Action.INTERACT]
                 loss_mask = subtask_mask #th.logical_or(subtask_mask, th.rand_like(subtask_loss, device=self.device) > 0.95)
-                print(subtask_loss, subtask_mask)
-                print(pred_subtask, next_subtask[:, i])
                 subtask_loss = th.mean(subtask_loss * loss_mask)
                 tot_loss += th.mean(subtask_loss)
                 metrics[f'p{i}_subtask_loss'] = subtask_loss.item()
@@ -293,13 +293,15 @@ class BehavioralCloningTrainer(OAITrainer):
         best_reward = 0
         for epoch in range(epochs):
             metrics = self.train_epoch()
-            mean_reward, shaped_reward = self.evaluate()
-            wandb.log({'eval_true_reward': mean_reward, 'eval_shaped_reward': shaped_reward, 'epoch': epoch, **metrics})
-            if mean_reward > best_reward:
-                print(f'Best reward achieved on epoch {epoch}, saving models')
-                best_path, best_tag = self.save(tag='best_reward')
-                best_reward = mean_reward
-        self.load(best_path, best_tag)
+            if (epoch + 1) % 10 == 0:
+                mean_reward, shaped_reward = self.evaluate()
+                wandb.log({'eval_true_reward': mean_reward, 'eval_shaped_reward': shaped_reward, 'epoch': epoch, **metrics})
+                if mean_reward > best_reward:
+                    print(f'Best reward achieved on epoch {epoch}, saving models')
+                    best_path, best_tag = self.save(tag='best_reward')
+                    best_reward = mean_reward
+        if best_path is not None:
+            self.load(best_path, best_tag)
         run.finish()
 
     def get_agent(self, idx):
@@ -307,14 +309,14 @@ class BehavioralCloningTrainer(OAITrainer):
 
     def save(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'IL_agents' / self.test_layout
-        tag = tag or (self.args.exp_name + '_' + self.dataset.remove('.pickle'))
+        tag = tag or (self.args.exp_name + '_' + self.dataset.replace('.pickle', ''))
         for i in range(2):
             self.agents[i].save(path / (tag + f'_p{i + 1}'))
         return path, tag
 
     def load(self, path=None, tag=None):
         path = path or self.args.base_dir / 'agent_models' / 'IL_agents' / self.test_layout
-        tag = tag or (self.args.exp_name + '_' + self.dataset.remove('.pickle'))
+        tag = tag or (self.args.exp_name + '_' + self.dataset.replace('.pickle', ''))
         for i in range(2):
             self.agents[i].load(path / (tag + f'_p{i + 1}'))
 

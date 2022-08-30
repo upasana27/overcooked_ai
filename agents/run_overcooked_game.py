@@ -85,7 +85,7 @@ class App:
         self._display_surf = None
         self.args = args
         self.layout_name = args.layout_name
-        self.env = OvercookedGymEnv(layout=args.layout_name, args=args)
+        self.env = OvercookedGymEnv(args=args)
         self.grid_shape = self.env.grid_shape
         if traj_file is not None:
             self.mode = 'replay'
@@ -180,9 +180,6 @@ class App:
         return done
 
     def on_loop(self):
-        # for i in range(2):
-        #     self.joint_action[i] = self.joint_action[i] or Action.STAY
-        # print(self.joint_action)
         assert(all([action is not None for action in self.joint_action]))
         done = self.step_env(self.joint_action)
         self.joint_action = [None, None]
@@ -341,13 +338,12 @@ if __name__ == "__main__":
     agents = None
     data_path = args.base_dir / args.data_path
     if args.agent_file is not None:
-        device = th.device('cuda' if th.cuda.is_available() else 'cpu')
-        env = OvercookedGymEnv(layout=args.layout_name, args=args)
+        env = OvercookedGymEnv(args=args)
         obs = env.get_obs()
         visual_obs_shape = obs['visual_obs'][0].shape
         agent_obs_shape = obs['agent_obs'][0].shape
-        agents = [SubtaskAdaptor(device, visual_obs_shape, agent_obs_shape, 0, args),
-                  SubtaskAdaptor(device, visual_obs_shape, agent_obs_shape, 1, args)]
+        agents = [SubtaskAdaptor(visual_obs_shape, agent_obs_shape, 0, args),
+                  SubtaskAdaptor(visual_obs_shape, agent_obs_shape, 1, args)]
         for i, agent in enumerate(agents):
             path = args.base_dir / 'agent_models' / 'IL_agents' / args.layout_name / (args.agent_file + f'_p{i + 1}')
             agent.load(path)

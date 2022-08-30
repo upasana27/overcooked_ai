@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+import torch as th
 
 
 def get_arguments(additional_args=[]):
@@ -39,4 +40,6 @@ def get_arguments(additional_args=[]):
 
     args = parser.parse_args()
     args.base_dir = Path(args.base_dir)
+    args.device = th.device('cuda' if th.cuda.is_available() else 'cpu')
+
     return args

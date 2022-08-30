@@ -10,22 +10,30 @@ import numpy as np
 import pygame
 from pygame.locals import HWSURFACE, DOUBLEBUF, RESIZABLE, QUIT, VIDEORESIZE
 from stable_baselines3.common.env_checker import check_env
+import torch as th
 
 
 class OvercookedGymEnv(Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, p1_agent=None, p2_agent=None, layout=None, grid_shape=None, shape_rewards=False, args=None):
-        self.agents = [p1_agent, p2_agent]
-        self.layout = layout
-        self.env = OvercookedEnv.from_mdp(OvercookedGridworld.from_layout_name(layout), horizon=args.horizon)
+    def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, obs_type=None, randomize_start=True, args=None):
+        self.agents = [p1, p2]
+        self.layout_name = args.layout_name
+        self.mdp = OvercookedGridworld.from_layout_name(self.layout_name)
+        ss_fn = None # Defaults to standard start fn
+        if randomize_start:
+            ss_fn = self.mdp.get_random_start_state_fn(random_start_pos=randomize_start,
+                                                       random_orientation=randomize_start)
+        self.env = OvercookedEnv.from_mdp(self.mdp, horizon=args.horizon, start_state_fn=ss_fn)
         self.state = self.env.state
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.visualization_enabled = False
         self.grid_shape = grid_shape or self.env.mdp.shape
         self.shape_rewards = shape_rewards
         self.args = args
+        self.device = args.device
         self.step_count = 0
+        self.obs_type = obs_type or np.array
 
         self.prev_state, self.prev_actions = deepcopy(self.state), (Action.STAY, Action.STAY)
         if all(self.agents):  # We control no agents
@@ -45,6 +53,7 @@ class OvercookedGymEnv(Env):
         else:  # We control both agents
             self.p_idx = None
             self.action_space = spaces.MultiDiscrete([ len(Action.ALL_ACTIONS), len(Action.ALL_ACTIONS) ])
+            print(self.grid_shape)
             obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, args.horizon)
             # TODO improve bounds for each dimension
             # Currently 20 is the default value for recipe time (which I believe is the largest value used
@@ -57,6 +66,9 @@ class OvercookedGymEnv(Env):
     def set_agent(self, agent, idx):
         self.agents[idx] = agent
 
+    def set_obs_type(self, ret_type=np.array):
+        self.obs_type = ret_type
+
     def setup_visualization(self):
         self.visualization_enabled = True
         pygame.init()
@@ -66,7 +78,11 @@ class OvercookedGymEnv(Env):
         pygame.display.flip()
 
     def get_obs(self, p_idx=None):
-        return self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
+        obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
+        if self.obs_type == th.tensor:
+            return {k: self.obs_type(v, device=self.device) for k, v in obs.items()}
+        else:
+            return {k: self.obs_type(v) for k, v in obs.items()}
 
     def step(self, action):
         if all(self.agents): # We control no agents
@@ -147,7 +163,7 @@ if __name__ == '__main__':
     from state_encodings import encode_state
     from arguments import get_arguments
     args = get_arguments()
-    env = OvercookedGymEnv(p1_agent=DummyAgent(), layout='asymmetric_advantages', args=args) #make('overcooked_ai.agents:OvercookedGymEnv-v0', layout='asymmetric_advantages', encoding_fn=encode_state, args=args)
+    env = OvercookedGymEnv(p1=DummyAgent(), args=args) #make('overcooked_ai.agents:OvercookedGymEnv-v0', layout='asymmetric_advantages', encoding_fn=encode_state, args=args)
     print(check_env(env))
     env.setup_visualization()
     env.reset()

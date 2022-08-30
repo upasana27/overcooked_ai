@@ -11,7 +11,8 @@ class Subtasks:
 def facing(layout, player):
     '''Returns terrain type that the agent is facing'''
     x, y = np.array(player.position) + np.array(player.orientation)
-    layout = [[t for t in row.strip("[]'")] for row in layout.split("', '")]
+    if type(layout) == str:
+        layout = [[t for t in row.strip("[]'")] for row in layout.split("', '")]
     return layout[y][x]
 
 def calculate_completed_subtask(layout, prev_state, curr_state, p_idx):
@@ -97,3 +98,47 @@ def calculate_completed_subtask(layout, prev_state, curr_state, p_idx):
         subtask = Subtasks.SUBTASKS_TO_IDS[subtask]
 
     return subtask
+
+def get_doable_subtasks(state, terrain, p_idx):
+    '''
+    Returns a mask subtasks that could be accomplished for a given state and player idx
+    :param state: curr state
+    :param terrain: layout
+    :param p_idx: player idx
+    :return: a np array of length NUM_SUBTASKS holding a 1 if the corresponding subtask is doable, otherwise a 0
+    '''
+    subtask_mask = np.zeros(Subtasks.NUM_SUBTASKS)
+    # The player is not holding any objects, so it can only accomplish tasks that require getting an object
+    if state.players[p_idx].held_object is None:
+        # These are always possible if the player is not holding an object
+        subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_onion_from_dispenser']] = 1
+        subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_plate_from_dish_rack']] = 1
+        # These are only possible if the respective objects exist on a counter somewhere
+        for obj in state.objects.values():
+            x, y = obj.position
+            if obj.name == 'onion':
+                subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_onion_from_counter']] = 1
+            elif obj.name == 'dish':
+                subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_plate_from_counter']] = 1
+            elif obj.name == 'soup' and obj.is_ready and terrain[y][x] != 'P':
+                subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_soup_from_counter']] = 1
+    # The player is holding an onion, so it can only accomplish tasks that involve putting the onion somewhere
+    elif state.players[p_idx].held_object.name == 'onion':
+        subtask_mask[Subtasks.SUBTASKS_TO_IDS['put_onion_in_pot']] = 1
+        subtask_mask[Subtasks.SUBTASKS_TO_IDS['put_onion_closer']] = 1
+    # The player is holding a plate, so it can only accomplish tasks that involve putting the plate somewhere
+    elif state.players[p_idx].held_object.name == 'dish':
+        subtask_mask[Subtasks.SUBTASKS_TO_IDS['put_plate_closer']] = 1
+        # Can only grab the soup using the plate if a soup is currently cooking
+        for obj in state.objects.values():
+            if obj.name == 'soup' and not obj.is_idle:
+                subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_soup']] = 1
+    # The player is holding a soup, so it can only accomplish tasks that involve putting the soup somewhere
+    elif state.players[p_idx].held_object.name == 'soup':
+        subtask_mask[Subtasks.SUBTASKS_TO_IDS['serve_soup']] = 1
+        subtask_mask[Subtasks.SUBTASKS_TO_IDS['put_soup_closer']] = 1
+    # print('Doable subtasks:')
+    # for i in range(len(subtask_mask)):
+    #     if subtask_mask[i] == 1:
+    #         print(Subtasks.IDS_TO_SUBTASKS[i])
+    return subtask_mask
