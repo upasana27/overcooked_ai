@@ -13,6 +13,10 @@ from state_encodings import ENCODING_SCHEMES
 
 # LSTM TASK
 class TwoSingleLSTMAgentTrainer(OAITrainer):
+    '''
+    Should be identical to TwoSingleAgentTrainer except that it should use an LSTM instead of an MLP.
+    Should only require changing this class and the OAISinglePlayerLSTMFeatureExtractor in networks.py
+    '''
     def __init__(self, args):
         super(SingleLSTMAgentTrainer, self).__init__(args)
         pass
@@ -86,9 +90,10 @@ class TwoSingleAgentsTrainer(OAITrainer):
         best_cum_rew = 0
         best_path, best_tag = None, None
         for epoch in range(epochs):
-            self.agents[0].learn(total_timesteps=10000)
-            self.agents[1].learn(total_timesteps=10000)
-            if epoch % 10 == 0:
+            print(epoch)
+            self.agents[0].learn(total_timesteps=1000)
+            self.agents[1].learn(total_timesteps=1000)
+            if (epoch + 1) % 10 == 0:
                 cum_rew = self.eval_env.run_full_episode()
                 print(f'Episode eval at epoch {epoch}: {cum_rew}')
                 wandb.log({'eval_true_reward': cum_rew, 'epoch': epoch})
@@ -152,7 +157,7 @@ class SingleAgentTrainer(OAITrainer):
         best_path, best_tag = None, None
         for epoch in range(epochs):
             self.agents[self.p_idx].learn(total_timesteps=10000)
-            if epoch % 10 == 0:
+            if (epoch + 1) % 10 == 0:
                 cum_rew = self.eval_env.run_full_episode()
                 print(f'Episode eval at epoch {epoch}: {cum_rew}')
                 wandb.log({'eval_true_reward': cum_rew, 'epoch': epoch})
@@ -161,6 +166,7 @@ class SingleAgentTrainer(OAITrainer):
                     best_cum_rew = cum_rew
         if best_path is not None:
             self.load(best_path, best_tag)
+        print(f'Best score achieved: {best_cum_rew}')
         run.finish()
 
     def get_agent(self, idx):
@@ -232,7 +238,7 @@ class OneDoubleAgentTrainer(OAITrainer):
         best_path, best_tag = None, None
         for epoch in range(epochs):
             self.agent.learn(total_timesteps=10000)
-            if epoch % 10 == 0:
+            if (epoch + 1) % 10 == 0:
                 cum_rew = self.run_full_episode()
                 print(f'Episode eval at epoch {epoch}: {cum_rew}')
                 wandb.log({'eval_true_reward': cum_rew, 'epoch': epoch})
@@ -241,6 +247,7 @@ class OneDoubleAgentTrainer(OAITrainer):
                     best_cum_rew = cum_rew
         if best_path is not None:
             self.load(best_path, best_tag)
+        print(f'Best score achieved: {best_cum_rew}')
         run.finish()
 
     def run_full_episode(self):
@@ -275,8 +282,6 @@ class OneDoubleAgentTrainer(OAITrainer):
 
 if __name__ == '__main__':
     args = get_arguments()
-    oda = OneDoubleAgentTrainer(args)
-    oda.train_agents(epochs=200)
     tsa = TwoSingleAgentsTrainer(args)
     tsa.train_agents(epochs=200)
     lstm = TwoSingleLSTMAgentTrainer(args)
