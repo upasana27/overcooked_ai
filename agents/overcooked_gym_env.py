@@ -22,8 +22,9 @@ class OvercookedGymEnv(Env):
         self.mdp = OvercookedGridworld.from_layout_name(self.layout_name)
         ss_fn = None # Defaults to standard start fn
         if randomize_start:
-            ss_fn = self.mdp.get_random_start_state_fn(random_start_pos=randomize_start,
-                                                       random_orientation=randomize_start)
+            ss_fn = self.mdp.get_random_start_state_fn(random_start_pos=True,
+                                                       random_orientation=True,
+                                                       rnd_obj_prob_thresh=0.25)
         self.env = OvercookedEnv.from_mdp(self.mdp, horizon=args.horizon, start_state_fn=ss_fn)
         self.state = self.env.state
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
@@ -131,6 +132,36 @@ class OvercookedGymEnv(Env):
 
     def close(self):
         pygame.quit()
+
+    def evaluate(self, main_agent=None, num_trials=25, other_agent=None):
+        reset_p1_to_none, reset_p2_to_none = False, False
+        if all(self.agents):
+            pass
+        elif any(self.agents):
+            if self.agents[0] is None:
+                assert main_agent.p_idx == 0
+                self.agents[0] = main_agent
+                reset_p1_to_none = True
+            else:
+                assert main_agent.p_idx == 1
+                self.agents[1] = main_agent
+                reset_p2_to_none = True
+        else:
+            assert main_agent.p_idx != other_agent.p_idx
+            self.agents[main_agent.p_idx] = main_agent
+            self.agents[(main_agent + 1) % 2] = other_agent
+            reset_p1_to_none, reset_p2_to_none = True, True
+
+        rewards = []
+        for trial in range(num_trials):
+            rewards.append(self.run_full_episode())
+        print(f'Mean reward = {np.mean(rewards)}')
+        if reset_p1_to_none:
+            self.agents[0] = None
+        if reset_p2_to_none:
+            self.agents[1] = None
+        return np.mean(rewards)
+
 
     def run_full_episode(self):
         assert self.agents[0] is not None and self.agents[1] is not None

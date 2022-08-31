@@ -185,46 +185,6 @@ class BehavioralCloningTrainer(OAITrainer):
         if self.visualize_evaluation:
             self.eval_env.setup_visualization()
 
-    def evaluate(self, num_trials=1, sample=True):
-        """
-        Evaluate agent on <num_trials> trials. Returns average true reward and average shaped reward trials.
-        :param num_trials: Number of trials to run
-        :param sample: Boolean. If true sample from action distribution. If false, always take 'best' action.
-                       NOTE: if sample is false, there is no point in running more than a single trial since the system
-                             becomes deterministic
-        :return: average true reward and average shaped reward
-        """
-        average_reward = []
-        shaped_reward = []
-        for trial in range(num_trials):
-            self.eval_env.reset()
-            for i, p in enumerate(self.agents):
-                p.reset(self.eval_env.state, i)
-            trial_reward, trial_shaped_r = 0, 0
-            done = False
-            timestep = 0
-            while not done:
-                # Encode Overcooked state into observations for agents
-                obs = self.eval_env.get_obs()
-                # Get next actions - we don't use overcooked gym env for this because we want to allow subtasks
-                joint_action = []
-                for i in range(2):
-                    agent_obs = {k: v[i] for k, v in obs.items()}
-                    action, _ = self.agents[i].predict(agent_obs, sample)
-                    joint_action.append(action)
-                joint_action = tuple(joint_action)
-                # Environment step
-                next_state, reward, done, info = self.eval_env.step(joint_action)
-                # Update metrics
-                trial_reward += np.sum(info['sparse_r_by_agent'])
-                trial_shaped_r += np.sum(info['shaped_r_by_agent'])
-                timestep += 1
-                if (timestep+1) % 200 == 0:
-                    print(f'Reward of {trial_reward} at step {timestep}')
-            average_reward.append(trial_reward)
-            shaped_reward.append(trial_shaped_r)
-        return np.mean(average_reward), np.mean(shaped_reward)
-
     def train_on_batch(self, batch):
         """Train BC agent on a batch of data"""
         # print({k: v for k,v in batch.items()})
@@ -303,6 +263,47 @@ class BehavioralCloningTrainer(OAITrainer):
         if best_path is not None:
             self.load(best_path, best_tag)
         run.finish()
+
+    def evaluate(self, num_trials=1, sample=True):
+        """
+        Evaluate agent on <num_trials> trials. Returns average true reward and average shaped reward trials.
+        :param num_trials: Number of trials to run
+        :param sample: Boolean. If true sample from action distribution. If false, always take 'best' action.
+                       NOTE: if sample is false, there is no point in running more than a single trial since the system
+                             becomes deterministic
+        :return: average true reward and average shaped reward
+        """
+        average_reward = []
+        shaped_reward = []
+        for trial in range(num_trials):
+            self.eval_env.reset()
+            for i, p in enumerate(self.agents):
+                p.reset(self.eval_env.state, i)
+            trial_reward, trial_shaped_r = 0, 0
+            done = False
+            timestep = 0
+            while not done:
+                # Encode Overcooked state into observations for agents
+                obs = self.eval_env.get_obs()
+                # Get next actions - we don't use overcooked gym env for this because we want to allow subtasks
+                joint_action = []
+                for i in range(2):
+                    agent_obs = {k: v[i] for k, v in obs.items()}
+                    action, _ = self.agents[i].predict(agent_obs, sample)
+                    joint_action.append(action)
+                joint_action = tuple(joint_action)
+                # Environment step
+                next_state, reward, done, info = self.eval_env.step(joint_action)
+                # Update metrics
+                trial_reward += np.sum(info['sparse_r_by_agent'])
+                trial_shaped_r += np.sum(info['shaped_r_by_agent'])
+                timestep += 1
+                if (timestep+1) % 200 == 0:
+                    print(f'Reward of {trial_reward} at step {timestep}')
+            average_reward.append(trial_reward)
+            shaped_reward.append(trial_shaped_r)
+        return np.mean(average_reward), np.mean(shaped_reward)
+
 
     def get_agent(self, idx):
         return self.agents[idx]
