@@ -16,52 +16,62 @@ import torch as th
 class OvercookedGymEnv(Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, obs_type=None, randomize_start=True, args=None):
+    def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, obs_type=None, randomize_start=True,
+                 horizon=None, args=None):
+        self.args = args
+        self.device = args.device
+        self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.agents = [p1, p2]
-        self.layout_name = args.layout_name
-        self.mdp = OvercookedGridworld.from_layout_name(self.layout_name)
+        self.mdp = OvercookedGridworld.from_layout_name(args.layout_name)
         ss_fn = None # Defaults to standard start fn
         if randomize_start:
-            ss_fn = self.mdp.get_random_start_state_fn(random_start_pos=True,
-                                                       random_orientation=True,
-                                                       rnd_obj_prob_thresh=0.25)
-        self.env = OvercookedEnv.from_mdp(self.mdp, horizon=args.horizon, start_state_fn=ss_fn)
-        self.state = self.env.state
-        self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
+            from overcooked_ai_py.planning.planners import MediumLevelActionManager
+            all_counters = self.mdp.get_counter_locations()
+            COUNTERS_PARAMS = {
+                'start_orientations': False,
+                'wait_allowed': False,
+                'counter_goals': all_counters,
+                'counter_drop': all_counters,
+                'counter_pickup': all_counters,
+                'same_motion_goals': True
+            }
+            self.mlam = MediumLevelActionManager.from_pickle_or_compute(self.mdp, COUNTERS_PARAMS, force_compute=False)
+            ss_fn = self.mdp.get_fully_random_start_state_fn(self.mlam,
+                                                             random_start_pos=True,
+                                                             random_orientation=True,
+                                                             rnd_obj_prob_thresh=0.5)
+        horizon = horizon or args.horizon
+        self.env = OvercookedEnv.from_mdp(self.mdp, horizon=horizon, start_state_fn=ss_fn)
         self.visualization_enabled = False
         self.grid_shape = grid_shape or self.env.mdp.shape
         self.shape_rewards = shape_rewards
-        self.args = args
-        self.device = args.device
         self.step_count = 0
         self.obs_type = obs_type or np.array
+        # If we play one agent, we play the agent that is not defined, otherwise both agents are equal
+        self.p_idx = (1 if self.agents[0] else 0) if any(self.agents) else None
+        obs = self.reset()
+        self.visual_obs_shape, self.agent_obs_shape = obs['visual_obs'].shape, obs['agent_obs'].shape
 
         self.prev_state, self.prev_actions = deepcopy(self.state), (Action.STAY, Action.STAY)
         if all(self.agents):  # We control no agents
-            self.p_idx = None
             self.action_space = spaces.Space()
             self.observation_space = spaces.Space()
         elif any(self.agents):  # We control 1 agent
-            self.p_idx = 1 if self.agents[0] else 0 # We play the agent that is not defined
             self.action_space = spaces.Discrete(len(Action.ALL_ACTIONS))
-            obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, args.horizon, p_idx=self.p_idx)
             # TODO improve bounds for each dimension
             # Currently 20 is the default value for recipe time (which I believe is the largest value used
             self.observation_space = spaces.Dict({
-                "visual_obs": spaces.Box(0, 20, obs['visual_obs'].shape, dtype=np.int),
-                "agent_obs":  spaces.Box(0, self.args.horizon, obs['agent_obs'].shape, dtype=np.float32)
+                "visual_obs": spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int),
+                "agent_obs":  spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
             })
         else:  # We control both agents
-            self.p_idx = None
             self.action_space = spaces.MultiDiscrete([ len(Action.ALL_ACTIONS), len(Action.ALL_ACTIONS) ])
-            print(self.grid_shape)
-            obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, args.horizon)
             # TODO improve bounds for each dimension
             # Currently 20 is the default value for recipe time (which I believe is the largest value used
             # self.observation_space = spaces.Box(0, 20, visual_obs.shape, dtype=np.int)
             self.observation_space = spaces.Dict({
-                "visual_obs": spaces.Box(0, 20, obs['visual_obs'].shape, dtype=np.int),
-                "agent_obs":  spaces.Box(0, self.args.horizon, obs['agent_obs'].shape, dtype=np.float32)
+                "visual_obs": spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int),
+                "agent_obs":  spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
             })
 
     def set_agent(self, agent, idx):
@@ -112,6 +122,7 @@ class OvercookedGymEnv(Env):
             sparse_r = sum(info['sparse_r_by_agent'])
             shaped_r = info['shaped_r_by_agent'][self.p_idx] if self.p_idx else sum(info['shaped_r_by_agent'])
             reward = sparse_r * ratio + shaped_r * (1 - ratio)
+        self.step_count += 1
         return self.get_obs(self.p_idx), reward, done, info
 
     def reset(self):
@@ -119,7 +130,7 @@ class OvercookedGymEnv(Env):
         self.state = self.env.state
         for i in range(2):
             if isinstance(self.agents[i], OAIAgent):
-                self.agents[i].reset(self.state, i)
+                self.agents[i].reset(self.state)
         return self.get_obs(self.p_idx)
 
     def render(self, mode='human', close=False):
@@ -128,7 +139,7 @@ class OvercookedGymEnv(Env):
             self.window = pygame.display.set_mode(surface.get_size(), HWSURFACE | DOUBLEBUF | RESIZABLE)
             self.window.blit(surface, (0, 0))
             pygame.display.flip()
-            pygame.time.wait(500)
+            pygame.time.wait(100)
 
     def close(self):
         pygame.quit()

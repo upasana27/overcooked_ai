@@ -6,7 +6,7 @@ import torch as th
 import wandb
 
 from arguments import get_arguments
-from agent import OAIAgent, OAITrainer
+from agent import OAIAgent, SB3Wrapper, OAITrainer
 from networks import OAISinglePlayerFeatureExtractor, OAIDoublePlayerFeatureExtractor
 from overcooked_gym_env import OvercookedGymEnv
 from overcooked_subtask_gym_env import OvercookedSubtaskGymEnv
@@ -30,93 +30,57 @@ class TwoSingleLSTMAgentTrainer(OAITrainer):
         pass
 
 
-class SingleAgentWrapper(OAIAgent):
-    ''' A wrapper for a stable baselines agents that controls a single player '''
-    def __init__(self, agent, idx):
-        '''
-        agent must be a stable baselines stable_baselines3.common.base_class.BaseAlgorithm that outputs one action
-        '''
-        super(SingleAgentWrapper, self).__init__()
-        self.agent = agent
-        self.policy= self.agent.policy
-        self.set_player_idx(idx)
-        self.name = f'rl_single_agent_p{self.p_idx + 1}'
-
+class SB3SingleAgentWrapper(SB3Wrapper):
+    ''' A wrapper for a stable baselines 3 agents that controls a single player '''
     def predict(self, obs):
         return self.agent.predict(obs)
 
     def get_distribution(self, obs: th.Tensor):
         return self.agent.get_distribution(obs)
 
-    def save(self, path):
-        print('In the future, please save the agent using SingleAgentTrainer.save or TwoSingleAgentsTrainer.save')
-        self.agent.save(path + f'_p{self.p_idx + 1}')
 
-    def load(self, path):
-        print('In the future, please load the agent using SingleAgentTrainer.save or TwoSingleAgentsTrainer.load')
-        self.agent.load(path + f'_p{self.p_idx + 1}')
-
-class DoubleAgentWrapper(OAIAgent):
+class SB3DoubleAgentWrapper(SB3Wrapper):
     ''' A wrapper for a stable baselines agents that controls both players (i.e. outputs an action for both) '''
-    def __init__(self, double_agent, idx):
-        """
-        double_agent must be a stable baselines stable_baselines3.common.base_class.BaseAlgorithm that outputs
-        an action for each agent
-        """
-        super(DoubleAgentWrapper, self).__init__()
-        self.double_agent = double_agent
-        self.policy = self.double_agent.policy
-        self.set_player_idx(idx)
-
     def predict(self, obs):
-        action, state = self.double_agent.predict(obs)
+        action, state = self.agent.predict(obs)
         return action[self.p_idx], state
 
     def get_distribution(self, obs: th.Tensor):
-        return self.double_agent.get_distribution(obs)[self.p_idx]
+        return self.agent.get_distribution(obs)[self.p_idx]
 
-    def save(self, path):
-        print('In the future, please save the agent using OneDoubleAgentTrainer.save')
-        self.double_agent.save(path + f'_p{self.p_idx + 1}')
-
-    def load(self, path):
-        print('In the future, please load the agent using OneDoubleAgentTrainer.load')
-        self.double_agent.load(path + f'_p{self.p_idx + 1}')
 
 class SingleAgentTrainer(OAITrainer):
     ''' Train an RL agent to play with a provided agent '''
-    def __init__(self, teammate, teammate_idx, args, use_subtask_env=False):
-        super(SingleAgentTrainer, self).__init__(args)
-        self.device = args.device
+    def __init__(self, teammate, teammate_idx, args, env=None):
+        super(SingleAgentTrainer, self).__init__('single_agent', args)
         self.args = args
+        self.device = args.device
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
-        self.t_idx = teammate_idx
-        self.p_idx = (teammate_idx + 1) % 2
-        EnvType = OvercookedSubtaskGymEnv if use_subtask_env else OvercookedGymEnv
+        self.t_idx, self.p_idx = teammate_idx, (teammate_idx + 1) % 2
+        p_kwargs = {'p1': teammate} if teammate_idx == 0 else {'p2': teammate}
         kwargs = {'shape_rewards': True, 'obs_type': th.tensor, 'args': args}
-        self.env = EnvType(p1=teammate, **kwargs) if teammate_idx == 0 else \
-                   EnvType(p2=teammate, **kwargs)
+        self.env = env or OvercookedGymEnv(**p_kwargs, **kwargs)
 
         policy_kwargs = dict(
             features_extractor_class=OAISinglePlayerFeatureExtractor,
             features_extractor_kwargs=dict(features_dim=256),
         )
-        self.agents = [teammate, PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1)] \
-                      if teammate_idx == 0 else \
-                      [PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1), teammate]
-        self.agents[0].policy.to(device)
-        self.agents[1].policy.to(device)
+        sb3_agent = PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1)
+        learner = self.wrap_agent(sb3_agent)
+        self.agents = [teammate, learner] if teammate_idx == 0 else [learner, teammate]
+
+    def wrap_agent(self, sb3_agent):
+        return SB3SingleAgentWrapper(sb3_agent, f'rl_single_agent_p{self.p_idx + 1}', self.p_idx, self.args)
 
     def train_agents(self, epochs=1000, exp_name=None):
         exp_name = exp_name or self.args.exp_name
         run = wandb.init(project="overcooked_ai_test", entity=self.args.wandb_ent, dir=str(self.args.base_dir / 'wandb'),
-                         reinit=True, name=exp_name + '_rl_single_agent', mode=self.args.wandb_mode)
+                         reinit=True, name=exp_name + '_' + self.agents[self.p_idx].name, mode=self.args.wandb_mode)
         for i in range(2):
             self.agents[i].policy.train()
         best_cum_rew = 0
         best_path, best_tag = None, None
         for epoch in range(epochs):
-            self.agents[self.p_idx].learn(total_timesteps=10000)
             if epoch % 10 == 0:
                 cum_rew = self.env.evaluate(self.agents[self.p_idx], num_trials=1)
                 print(f'Episode eval at epoch {epoch}: {cum_rew}')
@@ -124,6 +88,7 @@ class SingleAgentTrainer(OAITrainer):
                 if cum_rew > best_cum_rew:
                     best_path, best_tag = self.save()
                     best_cum_rew = cum_rew
+            self.agents[self.p_idx].learn(total_timesteps=10000)
         if best_path is not None:
             self.load(best_path, best_tag)
         run.finish()
@@ -132,27 +97,13 @@ class SingleAgentTrainer(OAITrainer):
         if idx != self.p_idx:
             raise ValueError(f'This trainer only trained a player {self.p_idx + 1} agent, '
                              f'and therefore cannot return a {self.t_idx + 1} agent')
-        agent = SingleAgentWrapper(self.agents[idx], idx)
-        agent.set_name(f'rl_single_agent_with_bc_p{idx + 1}')
-        return agent
-
-    def save(self, path=None, tag=None):
-        path = path or self.args.base_dir / 'agent_models' / 'RL_single_agent_with_bc' / self.args.layout_name
-        Path(path).mkdir(parents=True, exist_ok=True)
-        tag = tag or self.args.exp_name
-        self.agents[self.p_idx].save(path / (tag + f'_p{self.p_idx + 1}'))
-        return path, tag
-
-    def load(self, path=None, tag=None):
-        path = path or self.args.base_dir / 'agent_models' / 'RL_single_agent_with_bc' / self.args.layout_name
-        tag = tag or self.args.exp_name
-        self.agents[self.p_idx].load(path / (tag + f'_p{self.p_idx + 1}'))
+        return self.agents[self.p_idx]
 
 
 class TwoSingleAgentsTrainer(OAITrainer):
     ''' Train two independent RL agents to play with each other '''
     def __init__(self, args):
-        super(TwoSingleAgentsTrainer, self).__init__(args)
+        super(TwoSingleAgentsTrainer, self).__init__('two_single_agents', args)
         self.device = args.device
         self.args = args
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
@@ -163,10 +114,9 @@ class TwoSingleAgentsTrainer(OAITrainer):
             features_extractor_class=OAISinglePlayerFeatureExtractor,
             features_extractor_kwargs=dict(features_dim=256),
         )
-        self.agents = [PPO("MultiInputPolicy", self.envs[0], policy_kwargs=policy_kwargs, verbose=1),
-                       PPO("MultiInputPolicy", self.envs[1], policy_kwargs=policy_kwargs, verbose=1)]
-        self.agents[0].policy.to(self.device)
-        self.agents[0].policy.to(self.device)
+        agents = [PPO("MultiInputPolicy", self.envs[0], policy_kwargs=policy_kwargs, verbose=1),
+                  PPO("MultiInputPolicy", self.envs[1], policy_kwargs=policy_kwargs, verbose=1)]
+        self.agents = [SB3SingleAgentWrapper(agents[i], f'rl_two_single_agents_p{i + 1}', i, args) for i in range(2)]
 
         self.eval_env = OvercookedGymEnv(p1=self.agents[0], p2=self.agents[1], args=args)
         self.envs[0].set_agent(self.agents[1], idx=1)
@@ -181,8 +131,8 @@ class TwoSingleAgentsTrainer(OAITrainer):
         best_cum_rew = 0
         best_path, best_tag = None, None
         for epoch in range(epochs):
-            self.agents[0].learn(total_timesteps=10000)
-            self.agents[1].learn(total_timesteps=10000)
+            self.agents[0].learn(total_timesteps=1000)
+            self.agents[1].learn(total_timesteps=1000)
             if epoch % 10 == 0:
                 cum_rew = self.eval_env.run_full_episode()
                 print(f'Episode eval at epoch {epoch}: {cum_rew}')
@@ -194,30 +144,14 @@ class TwoSingleAgentsTrainer(OAITrainer):
             self.load(best_path, best_tag)
         run.finish()
 
-    def get_agent(self, idx):
-        agent = SingleAgentWrapper(self.agents[idx], idx)
-        agent.set_name(f'rl_two_single_agents_p{idx + 1}')
-        return agent
-
-    def save(self, path=None, tag=None):
-        path = path or self.args.base_dir / 'agent_models' / 'RL_two_single_agents' / self.args.layout_name
-        Path(path).mkdir(parents=True, exist_ok=True)
-        tag = tag or self.args.exp_name
-        for i in range(2):
-            self.agents[i].save(path / (tag + f'_p{i + 1}'))
-        return path, tag
-
-    def load(self, path=None, tag=None):
-        path = path or self.args.base_dir / 'agent_models' / 'RL_two_single_agents' / self.args.layout_name
-        tag = tag or self.args.exp_name
-        for i in range(2):
-            self.agents[i].load(path / (tag + f'_p{i + 1}'))
+    def get_agent(self, p_idx):
+        return self.agents[p_idx]
 
 
 class OneDoubleAgentTrainer(OAITrainer):
     ''' Train an RL agent to play both agents '''
     def __init__(self, args):
-        super(OneDoubleAgentTrainer, self).__init__(args)
+        super(OneDoubleAgentTrainer, self).__init__('one_double_agent', args)
         self.device = args.device
         self.args = args
         self.env = OvercookedGymEnv(obs_type= th.tensor, shape_rewards=True, args=args)
@@ -226,7 +160,7 @@ class OneDoubleAgentTrainer(OAITrainer):
             features_extractor_kwargs=dict(features_dim=256),
         )
         self.agent = PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1)
-        self.agent.policy.to(self.device)
+        self.agents = [SB3DoubleAgentWrapper(self.agent, f'rl_one_double_agent_p{i + 1}', i, args) for i in range(2)]
         self.eval_env = OvercookedGymEnv(args=args)
 
     def train_agents(self, epochs=1000, exp_name=None):
@@ -260,22 +194,9 @@ class OneDoubleAgentTrainer(OAITrainer):
         return total_reward
 
     def get_agent(self, idx):
-        agent = DoubleAgentWrapper(self.agent, idx)
+        agent = SB3DoubleAgentWrapper(self.agent, idx)
         agent.set_name(f'rl_double_agent_p{idx + 1}')
         return agent
-
-    def save(self, path=None, tag=None):
-        path = path or self.args.base_dir / 'agent_models' / 'RL_double_agent' / self.args.layout_name
-        Path(path).mkdir(parents=True, exist_ok=True)
-        tag = tag or self.args.exp_name
-        self.agent.save(path / tag)
-        return tag, path
-
-    def load(self, path=None, tag=None):
-        path = path or self.args.base_dir / 'agent_models' / 'RL_double_agent' / self.args.layout_name
-        tag = tag or self.args.exp_name
-        print(path, tag, path / tag)
-        self.agent.load(path / tag)
 
 
 

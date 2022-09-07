@@ -7,6 +7,9 @@ class Subtasks:
     NUM_SUBTASKS = len(SUBTASKS)
     SUBTASKS_TO_IDS = {s: i for i, s in enumerate(SUBTASKS)}
     IDS_TO_SUBTASKS = {v: k for k, v in SUBTASKS_TO_IDS.items()}
+    BASE_STS = ['get_onion_from_dispenser', 'put_onion_in_pot', 'get_plate_from_dish_rack', 'get_soup', 'serve_soup']
+    SUPP_STS = ['put_onion_closer', 'put_plate_closer', 'put_soup_closer']
+    COMP_STS = ['get_onion_from_counter', 'get_plate_from_counter', 'get_soup_from_counter']
 
 def facing(layout, player):
     '''Returns terrain type that the agent is facing'''

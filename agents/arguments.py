@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 import torch as th
 
+ARGS_TO_SAVE_LOAD = ['layout_name', 'use_subtasks', 'encoding_fn']
 
 def get_arguments(additional_args=[]):
     """
@@ -9,7 +10,7 @@ def get_arguments(additional_args=[]):
     :return:
     """
     parser = argparse.ArgumentParser(description='PyTorch Soft Actor-Critic Args')
-    parser.add_argument('--layout-name', default='asymmetric_advantages',  help='Overcooked map to use')
+    parser.add_argument('--layout-name', default='counter_circuit_o_1order',  help='Overcooked map to use')
     parser.add_argument('--use-subtasks', action='store_true', help='Condition IL agents on subtasks (default: False)')
     parser.add_argument('--policy-selection', type=str, default='CEM',
                         help='Which policy selection algorithm to use. Options: "CEM", "PLASTIC". Default: "CEM"')
@@ -45,3 +46,12 @@ def get_arguments(additional_args=[]):
     args.device = th.device('cuda' if th.cuda.is_available() else 'cpu')
 
     return args
+
+def get_args_to_save(curr_args):
+    arg_dict = vars(curr_args)
+    arg_dict = {k: v for k, v in arg_dict.items() if k in ARGS_TO_SAVE_LOAD}
+    return arg_dict
+
+def set_args_from_load(loaded_args, curr_args):
+    for arg in ARGS_TO_SAVE_LOAD:
+        setattr(curr_args, arg, loaded_args[arg])

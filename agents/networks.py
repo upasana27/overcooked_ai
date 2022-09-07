@@ -34,7 +34,7 @@ class GridEncoder(nn.Module):
         self.encoder = nn.Sequential(*layers)
 
     def forward(self, obs):
-        return self.encoder(obs)
+        return self.encoder(obs.float())
 
 class MLP(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim=256, num_layers=2, act=nn.ReLU):
@@ -79,28 +79,32 @@ class OAISinglePlayerFeatureExtractor(BaseFeaturesExtractor):
         super(OAISinglePlayerFeatureExtractor, self).__init__(observation_space, features_dim)
         self.use_visual_obs = np.prod(observation_space['visual_obs'].shape) > 0
         self.use_vector_obs = np.prod(observation_space['agent_obs'].shape) > 0
+        self.use_subtask_obs = 'subtask' in observation_space.keys()
+        input_dim = 0
         if self.use_visual_obs:
             self.vis_encoder = GridEncoder(observation_space['visual_obs'].shape)
             test_shape = [1, *observation_space['visual_obs'].shape]
-            self.encoder_output_shape = get_output_shape(self.vis_encoder, test_shape)[0]
-        else:
-            self.encoder_output_shape = 0
+            input_dim += get_output_shape(self.vis_encoder, test_shape)[0]
+        if self.use_vector_obs:
+            input_dim += np.prod(observation_space['agent_obs'].shape)
+        if self.use_subtask_obs:
+            input_dim += np.prod(observation_space['subtask'].shape)
 
         # Define MLP for vector/feature based observations
-        self.vector_encoder = MLP(input_dim=self.encoder_output_shape + np.prod(observation_space['agent_obs'].shape),
-                                  output_dim=features_dim)
+        self.vector_encoder = MLP(input_dim=input_dim, output_dim=features_dim)
         self.apply(weights_init_)
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
-        visual_obs, agent_obs = observations['visual_obs'], observations['agent_obs']
         latent_state = []
         # Concatenate all input features before passing them to MLP
         if self.use_visual_obs:
             # Convert all grid-like observations to features using CNN
-            latent_state.append(self.vis_encoder.forward(visual_obs))
+            latent_state.append(self.vis_encoder.forward(observations['visual_obs']))
         if self.use_vector_obs:
-            latent_state.append(th.flatten(agent_obs, start_dim=1))
-        # print(self.vis_encoder(visual_obs).shape, agent_obs.shape)
+            latent_state.append(th.flatten(observations['agent_obs'], start_dim=1))
+        if self.use_subtask_obs:
+            latent_state.append(th.flatten(observations['subtask'], start_dim=1))
+
         return self.vector_encoder.forward(th.cat(latent_state, dim=-1))
 
 

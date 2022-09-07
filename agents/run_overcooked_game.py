@@ -15,7 +15,7 @@ import torch as th
 
 from agent import OAIAgent
 from behavioral_cloning import BehaviouralCloningAgent
-from subtask_agents import SubtaskAgent
+from hrl_agents import Manager
 from arguments import get_arguments
 from overcooked_gym_env import OvercookedGymEnv
 from state_encodings import ENCODING_SCHEMES
@@ -342,8 +342,8 @@ if __name__ == "__main__":
         obs = env.get_obs()
         visual_obs_shape = obs['visual_obs'][0].shape
         agent_obs_shape = obs['agent_obs'][0].shape
-        agents = [SubtaskAgent(visual_obs_shape, agent_obs_shape, 0, args),
-                  SubtaskAgent(visual_obs_shape, agent_obs_shape, 1, args)]
+        agents = [Manager(visual_obs_shape, agent_obs_shape, 0, args),
+                  Manager(visual_obs_shape, agent_obs_shape, 1, args)]
         for i, agent in enumerate(agents):
             path = args.base_dir / 'agent_models' / 'IL_agents' / args.layout_name / (args.agent_file + f'_p{i + 1}')
             agent.load(path)

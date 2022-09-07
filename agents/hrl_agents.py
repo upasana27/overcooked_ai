@@ -1,7 +1,10 @@
-from agent import OAIAgent
+from agent import OAIAgent, SB3Wrapper, OAITrainer
+from arguments import get_arguments
 from behavioral_cloning import BehaviouralCloningPolicy, BehaviouralCloningAgent, BehavioralCloningTrainer
 from overcooked_gym_env import OvercookedGymEnv
-from rl_agents import TwoSingleAgentsTrainer, OneDoubleAgentTrainer, SingleAgentTrainer, DoubleAgentWrapper
+from overcooked_subtask_gym_env import OvercookedSubtaskGymEnv
+from overcooked_manager_gym_env import OvercookedManagerGymEnv
+from rl_agents import TwoSingleAgentsTrainer, OneDoubleAgentTrainer, SingleAgentTrainer, SB3DoubleAgentWrapper
 from subtasks import Subtasks, calculate_completed_subtask, get_doable_subtasks
 from state_encodings import ENCODING_SCHEMES
 
@@ -15,57 +18,59 @@ import torch.nn.functional as F
 from typing import Tuple, Union
 
 
+def create_rl_worker(dataset_file, p_idx, args):
+    t_idx = (p_idx + 1) % 2
+    bct = BehavioralCloningTrainer(dataset_file, args)
+    # bct.train_agents(epochs=1)
+    tm = bct.get_agent(idx=t_idx)
+
+    # tsat = TwoSingleAgentsTrainer(args)
+    # tsat.train_agents(epochs=2)
+    # tm = tsat.get_agent(p_idx)
+
+    # RL single subtask agents trained with BC partner
+    p_kwargs = {'p1': tm} if t_idx == 0 else {'p2': tm}
+    kwargs = {'shape_rewards': True, 'obs_type': th.tensor, 'args': args}
+    env = OvercookedSubtaskGymEnv(**p_kwargs, **kwargs)
+    rl_sat = SingleAgentTrainer(tm, t_idx, args, env=env)
+    rl_sat.train_agents(epochs=2000)
+    worker = rl_sat.get_agent(p_idx)
+    return worker
+
+
+def create_bc_worker(dataset_file, p_idx, args):
+    args.use_subtasks = True
+    bct = BehavioralCloningTrainer(dataset_file, args)
+    bct.train_agents(epochs=1000)
+    worker = bct.get_agent(idx=p_idx)
+    return worker
+
+
 # TODO Move to util
 def is_held_obj(player, object):
     '''Returns True if the object that the "player" picked up / put down is the same as the "object"'''
     x, y = np.array(player.position) + np.array(player.orientation)
     return player.held_object is not None and \
-           (
-                (object.name == player.held_object.name) or
-                (object.name == 'soup' and player.held_object.name == 'onion')
-           )\
+           ((object.name == player.held_object.name) or
+            (object.name == 'soup' and player.held_object.name == 'onion'))\
            and object.position == (x, y)
 
 
-
-class SubtaskAgent(OAIAgent):
-    def __init__(self, agent, p_idx, args):
-        super(SubtaskAgent, self).__init__()
-        self.base_agent = agent
-        assert agent.p_idx == p_idx
+class Manager(OAIAgent):
+    def __init__(self, worker, p_idx, args):
+        super(Manager, self).__init__(f'base_manager', p_idx, args)
+        self.worker = worker
+        assert worker.p_idx == p_idx
         self.set_player_idx(p_idx)
-        self.subtask_adaptor = None  # TODO
         self.trajectory = []
         self.terrain = OvercookedGridworld.from_layout_name(args.layout_name).terrain_mtx
         # for i in range(len(self.terrain)):
         #     self.terrain[i] = ''.join(self.terrain[i])
         # self.terrain = str(self.terrain)
-        self.agent_subtask_counts = np.zeros((2, Subtasks.NUM_SUBTASKS))
+        self.worker_subtask_counts = np.zeros((2, Subtasks.NUM_SUBTASKS))
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.subtask_selection = args.subtask_selection
-        self.name = f'base_subtask_adaptor'
-        self.reset(None, idx)
-
-    @staticmethod
-    def create_subtask_adaptor_with_rl_base_agent(dataset_file, p_idx, args):
-        bct = BehavioralCloningTrainer(dataset_file, args)
-        bct.train_agents(epochs=1000)
-        t_idx = (p_idx + 1) % 2
-        bc_agent = bct.get_agent(idx=t_idx)
-
-        # RL single subtask agents trained with BC partner
-        rl_sat = SingleAgentTrainer(bc_agent, t_idx, args, use_subtask_env=True)
-        rl_sat.train_agents(epochs=1000)
-        subtask_agent = rl_sat.get_agent(p_idx)
-        return SubtaskAgent(subtask_agent, p_idx, args)
-
-    @staticmethod
-    def create_subtask_adaptor_with_bc_base_agent(dataset_file, p_idx, args):
-        args.use_subtasks = True
-        bct = BehavioralCloningTrainer(dataset_file, args)
-        bct.train_agents(epochs=1000)
-        subtask_agent = bct.get_agent(idx=p_idx)
-        return SubtaskAgent(subtask_agent, p_idx, args)
+        self.reset(None)
 
     def select_next_subtask(self, curr_state):
         ''' Given the current state, select the next subtask to perform'''
@@ -75,19 +80,19 @@ class SubtaskAgent(OAIAgent):
         obs = [(th.tensor(o, dtype=th.float32).to(self.device) if not isinstance(o, th.Tensor) else o.to(self.device))
                for o in [obs['visual_obs'], obs['agent_obs']]]
         obs = [o.unsqueeze(dim=0).to(self.device) for o in (*obs, self.curr_subtask)]
-        action_logits = self.base_agent.forward(obs)
+        action_logits = self.worker.forward(obs)
         action = Categorical(logits=action_logits).sample() if sample else th.argmax(action_logits, dim=-1)
         return action
 
     def step(self, new_state, joint_action):
         if self.p_idx is None:
-            raise ValueError('Player idx must be set before SubtaskAgent.step can be called')
+            raise ValueError('Player idx must be set before Manager.step can be called')
         for i in range(2):
             if joint_action[i] == Action.ACTION_TO_INDEX[Action.INTERACT]:
                 # Update subtask counts
                 subtask_id = calculate_completed_subtask(self.terrain, self.curr_state, new_state, i)
                 if subtask_id is not None: # i.e. If interact has an effect
-                    self.agent_subtask_counts[i][subtask_id] += 1
+                    self.worker_subtask_counts[i][subtask_id] += 1
                 # Pick next subtask
                 self.select_next_subtask(self.curr_state)
 
@@ -96,83 +101,74 @@ class SubtaskAgent(OAIAgent):
             self.update_subtask_values(self.curr_state, new_state)
         self.curr_state = new_state
 
-    def reset(self, state, player_idx):
-        super().reset(state, player_idx)
+    def reset(self, state):
+        super().reset(state)
         self.trajectory = []
         self.curr_state = state
         # Pick first subtask
         self.select_next_subtask(self.curr_state)
 
-class RLSubtaskAgent(SubtaskAgent):
-    def __init__(self, agent, p_idx, args):
-        super(RLSubtaskAgent, self).__init__(agent, p_idx, args)
-        self.name = 'rl_subtask_agent'
+class RLManagerWrapper(SB3Wrapper, Manager):
+    '''
+    A wrapper for a stable baselines 3 agents that controls which subtask a worker should perform.
+    NOTE: When using the class loading method, it requires an additional kwarg of the worker (e.g. worker=bc_agent)
+    '''
+    def __init__(self, agent, worker, p_idx, args):
+        # This will call SB3Wrapper init due to MRO. SB3Wrapper expects the agent passed in is the agent to save
+        # There is no need to call the Manager init, since all that code is to set up trajectory collection
+        super(RLManagerWrapper, self).__init__(manager, p_idx, args)
+        self.name = 'rl_manager'
+        self.manager = agent
+        self.worker = worker
 
     def select_next_subtask(self, curr_state):
-        # TODO
+        obs = self.encoding_fn(curr_state)
+        obs = {k: self.obs_type(v, device=self.device) for k, v in obs.items()}
+        subtask_idx = self.manager.predict(obs)[0]
+        return F.one_hot(subtask_idx, Subtasks.NUM_SUBTASKS)
+
+    def step(self, new_state, joint_action):
         pass
 
-class RLSubtaskAgentTrainer(OAITrainer):
+    def reset(self, state):
+        pass
+
+class RLManagerTrainer(SingleAgentTrainer):
     ''' Train an RL agent to play with a provided agent '''
-    def __init__(self, teammate, teammate_idx, args, use_subtask_env=False):
-        super(RLSubtaskAgentTrainer, self).__init__(args)
-        self.device = args.device
-        self.args = args
-        self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
-        self.t_idx = teammate_idx
-        self.p_idx = (teammate_idx + 1) % 2
-        kwargs = {'shape_rewards': True, 'obs_type': th.tensor, 'args': args}
-        self.env = # TODO create new gym env to train this agent where an action is selecting the next subtask
+    def __init__(self, worker, teammate, teammate_idx, args):
+        env = OvercookedManagerGymEnv(worker=worker, teammate=teammate, shape_rewards=True, obs_type=th.tensor,
+                                      randomize_start=False, args=args)
+        self.worker = worker
+        super(RLManagerTrainer, self).__init__(teammate, teammate_idx, args, env=env)
+        assert worker.p_idx == self.p_idx and teammate.p_idx == self.t_idx
 
-        policy_kwargs = dict(
-            features_extractor_class=OAISinglePlayerFeatureExtractor,
-            features_extractor_kwargs=dict(features_dim=256),
-        )
-        self.agents = [teammate, PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1)] \
-                      if teammate_idx == 0 else \
-                      [PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1), teammate]
-        self.agents[0].policy.to(device)
-        self.agents[1].policy.to(device)
+    def wrap_agent(self, rl_agent):
+        return RLManagerWrapper(rl_agent, self.worker, self.p_idx, self.args)
 
-    def train_agents(self, epochs=1000, exp_name=None):
-        exp_name = exp_name or self.args.exp_name
-        run = wandb.init(project="overcooked_ai_test", entity=self.args.wandb_ent, dir=str(self.args.base_dir / 'wandb'),
-                         reinit=True, name=exp_name + '_rl_single_agent', mode=self.args.wandb_mode)
-        for i in range(2):
-            self.agents[i].policy.train()
-        best_cum_rew = 0
-        best_path, best_tag = None, None
-        for epoch in range(epochs):
-            self.agents[self.p_idx].learn(total_timesteps=10000)
-            if epoch % 10 == 0:
-                cum_rew = self.env.evaluate(self.agents[self.p_idx], num_trials=1)
-                print(f'Episode eval at epoch {epoch}: {cum_rew}')
-                wandb.log({'eval_true_reward': cum_rew, 'epoch': epoch})
-                if cum_rew > best_cum_rew:
-                    best_path, best_tag = self.save()
-                    best_cum_rew = cum_rew
-        if best_path is not None:
-            self.load(best_path, best_tag)
-        run.finish()
-
-    def get_agent(self, idx):
-        if idx != self.p_idx:
-            raise ValueError(f'This trainer only trained a player {self.p_idx + 1} agent, '
-                             f'and therefore cannot return a {self.t_idx + 1} agent')
-        agent = SingleAgentWrapper(self.agents[idx], idx)
-        agent.set_name(f'rl_single_agent_with_bc_p{idx + 1}')
-        return agent
-
-    def save(self, path=None, tag=None):
-        # TODO
-
-    def load(self, path=None, tag=None):
-        # TODO
-
-
-class ValueBasedSubtaskAgent(SubtaskAgent):
+class ValueBasedManager(Manager):
+    """
+    Follows a few basic rules. (tm = teammate)
+    1. All independent tasks values:
+       a) Get onion from dispenser = (3 * num_pots) - 0.5 * num_onions
+       b) Get plate from dish rack = num_filled_pots * (2
+       c)
+       d)
+    2. Supporting tasks
+       a) Start at a value of zero
+       b) Always increases in value by a small amount (supporting is good)
+       c) If one is performed and the tm completes the complementary task, then the task value is increased
+       d) If the tm doesn't complete the complementary task, after a grace period the task value starts decreasing
+          until the object is picked up
+    3. Complementary tasks:
+       a) Start at a value of zero
+       b) If a tm performs a supporting task, then its complementary task value increases while the object remains
+          on the counter.
+       c) If the object is removed from the counter, the complementary task value is reset to zero (the
+          complementary task cannot be completed if there is no object to pick up)
+    :return:
+    """
     def __init__(self, agent, p_idx, args):
-        super(ValueBasedSubtaskAgent, self).__init__(agent, p_idx, args)
+        super(ValueBasedManager, self).__init__(agent, p_idx, args)
         self.name = 'value_based_subtask_adaptor'
         self.init_subtask_values()
 
@@ -284,24 +280,6 @@ class ValueBasedSubtaskAgent(SubtaskAgent):
         self.subtask_values = np.clip(self.subtask_values, 0, 10)
 
     def get_subtask_values(self, curr_state):
-        """
-        Follows a few basic rules. (tm = teammate)
-        1. All independent tasks:
-           a) Always have a value of one.
-        2. Supporting tasks
-           a) Start at a value of zero
-           b) Always increases in value by a small amount (supporting is good)
-           c) If one is performed and the tm completes the complementary task, then the task value is increased
-           d) If the tm doesn't complete the complementary task, after a grace period the task value starts decreasing
-              until the object is picked up
-        3. Complementary tasks:
-           a) Start at a value of zero
-           b) If a tm performs a supporting task, then its complementary task value increases while the object remains
-              on the counter.
-           c) If the object is removed from the counter, the complementary task value is reset to zero (the
-              complementary task cannot be completed if there is no object to pick up)
-        :return:
-        """
         assert self.subtask_values is not None
         return self.subtask_values * self.doable_subtasks(curr_state, self.terrain, self.p_idx)
 
@@ -315,9 +293,9 @@ class ValueBasedSubtaskAgent(SubtaskAgent):
         super().reset(state, player_idx)
         self.init_subtask_values()
 
-class DistBasedSubtaskAgent(SubtaskAgent):
+class DistBasedManager(Manager):
     def __init__(self, agent, p_idx, args):
-        super(DistBasedSubtaskAgent, self).__init__(agent, p_idx, args)
+        super(DistBasedManager, self).__init__(agent, p_idx, args)
         self.name = 'dist_based_subtask_agent'
 
     def distribution_matching(self, subtask_logits, egocentric=False):
@@ -327,10 +305,10 @@ class DistBasedSubtaskAgent(SubtaskAgent):
         """
         assert self.optimal_distribution is not None
         if egocentric:
-            curr_dist = self.agent_subtask_counts[self.p_idx]
+            curr_dist = self.worker_subtask_counts[self.p_idx]
             best_dist = self.optimal_distribution[self.p_idx]
         else:
-            curr_dist = self.agent_subtask_counts.sum(axis=0)
+            curr_dist = self.worker_subtask_counts.sum(axis=0)
             best_dist = self.optimal_distribution.sum(axis=0)
         curr_dist = curr_dist / np.sum(curr_dist)
         dist_diff = best_dist - curr_dist
@@ -352,5 +330,14 @@ class DistBasedSubtaskAgent(SubtaskAgent):
         # TODO
         pass
 
+if __name__ == '__main__':
+    args = get_arguments()
+    p_idx, t_idx = 0, 1
+    worker = create_rl_worker(args.dataset, p_idx, args)
+    tsat = TwoSingleAgentsTrainer(args)
+    tsat.train_agents(epochs=2)
+    teammate = tsat.get_agent(t_idx)
+    RLManagerTrainer(worker, teammate, t_idx, args)
+    RLManagerTrainer.train_agents(epochs=100)
 
 

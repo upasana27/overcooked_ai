@@ -1058,8 +1058,9 @@ class OvercookedGridworld(object):
             return start_state
         return start_state_fn
 
-    def get_fully_random_start_state_fn(self, random_start_pos=False, random_orientation=False, rnd_obj_prob_thresh=0.0):
+    def get_fully_random_start_state_fn(self, mlam, random_start_pos=False, random_orientation=False, rnd_obj_prob_thresh=0.0):
         def start_state_fn():
+            nonlocal random_start_pos, random_orientation, rnd_obj_prob_thresh
             if random_start_pos:
                 valid_positions = self.get_valid_joint_player_positions()
                 start_pos = valid_positions[np.random.choice(len(valid_positions))]
@@ -1088,22 +1089,23 @@ class OvercookedGridworld(object):
                 p = np.random.rand()
                 if p < rnd_obj_prob_thresh:
                     # Different objects have different probabilities
-                    obj = np.random.choice(["dish", "onion", "soup"], p=[0.2, 0.6, 0.2])
+                    obj = np.random.choice(["dish", "onion", "soup"], p=[0.3, 0.4, 0.3])
                     if obj == "soup":
                         player.set_object(SoupState.get_soup(player.position, num_onions=3, finished=True))
                     else:
                         player.set_object(ObjectState(obj, player.position))
 
-            for pos in find_free_counters_valid_for_both_players(start_state):
+            for pos in self.find_free_counters_valid_for_both_players(start_state, mlam):
                 p = np.random.rand()
-                if p < rnd_obj_prob_thresh:
-                    obj = np.random.choice(["dish", "onion", "soup"], p=[0.2, 0.6, 0.2])
+                thresh = rnd_obj_prob_thresh
+                if p < thresh:
+                    obj = np.random.choice(["dish", "onion", "soup"], p=[0.3, 0.4, 0.3])
                     if obj == "soup":
                         obj = SoupState.get_soup(pos, num_onions=3, finished=True)
                     else:
                         obj = ObjectState(obj, pos)
                     start_state.add_object(obj, pos)
-                rnd_obj_prob_thresh /= 2
+                    thresh /= 2
 
             return start_state
         return start_state_fn
