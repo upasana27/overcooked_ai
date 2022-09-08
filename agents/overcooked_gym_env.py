@@ -50,28 +50,25 @@ class OvercookedGymEnv(Env):
         self.p_idx = (1 if self.agents[0] else 0) if any(self.agents) else None
         obs = self.reset()
         self.visual_obs_shape, self.agent_obs_shape = obs['visual_obs'].shape, obs['agent_obs'].shape
-
+        # TODO improve bounds for each dimension
+        # Currently 20 is the default value for recipe time (which I believe is the largest value used
+        obs_dict = {}
+        if np.prod(self.visual_obs_shape) > 0:
+            obs_dict["visual_obs"] = spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int)
+        if np.prod(self.agent_obs_shape) > 0:
+            obs_dict["agent_obs"] =  spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
+        self.observation_space = spaces.Dict(obs_dict)
+       
+        print(self.observation_space)
+ 
         self.prev_state, self.prev_actions = deepcopy(self.state), (Action.STAY, Action.STAY)
         if all(self.agents):  # We control no agents
             self.action_space = spaces.Space()
-            self.observation_space = spaces.Space()
         elif any(self.agents):  # We control 1 agent
             self.action_space = spaces.Discrete(len(Action.ALL_ACTIONS))
-            # TODO improve bounds for each dimension
-            # Currently 20 is the default value for recipe time (which I believe is the largest value used
-            self.observation_space = spaces.Dict({
-                "visual_obs": spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int),
-                "agent_obs":  spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
-            })
         else:  # We control both agents
             self.action_space = spaces.MultiDiscrete([ len(Action.ALL_ACTIONS), len(Action.ALL_ACTIONS) ])
-            # TODO improve bounds for each dimension
-            # Currently 20 is the default value for recipe time (which I believe is the largest value used
-            # self.observation_space = spaces.Box(0, 20, visual_obs.shape, dtype=np.int)
-            self.observation_space = spaces.Dict({
-                "visual_obs": spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int),
-                "agent_obs":  spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
-            })
+        
 
     def set_agent(self, agent, idx):
         self.agents[idx] = agent

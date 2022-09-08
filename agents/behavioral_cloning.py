@@ -127,7 +127,7 @@ class BehaviouralCloningAgent(OAIAgent):
                 ps[subtask_id] = 1
                 self.curr_subtask = ps.float()
                 self.first_step = False
-                print('new subtask', Subtasks.IDS_TO_SUBTASKS[subtask_id.item()])
+                # print('new subtask', Subtasks.IDS_TO_SUBTASKS[subtask_id.item()])
         return action, None
 
     def get_distribution(self, obs: th.Tensor):
@@ -163,10 +163,10 @@ class BehavioralCloningTrainer(OAITrainer):
         obs = self.eval_env.get_obs()
         visual_obs_shape = obs['visual_obs'][0].shape
         agent_obs_shape = obs['agent_obs'][0].shape
-        self.agents = (
+        self.agents = [
             BehaviouralCloningAgent(visual_obs_shape, agent_obs_shape, 0, args),
             BehaviouralCloningAgent(visual_obs_shape, agent_obs_shape, 1, args)
-        )
+        ]
         self.optimizers = tuple([th.optim.Adam(agent.parameters(), lr=args.lr) for agent in self.agents])
         action_weights = th.tensor(self.train_dataset.get_action_weights(), dtype=th.float32, device=self.device)
         self.action_criterion = nn.CrossEntropyLoss(weight=action_weights)
@@ -250,8 +250,8 @@ class BehavioralCloningTrainer(OAITrainer):
                 mean_reward, shaped_reward = self.evaluate()
                 wandb.log({'eval_true_reward': mean_reward, 'eval_shaped_reward': shaped_reward, 'epoch': epoch, **metrics})
                 if mean_reward > best_reward:
-                    print(f'Best reward achieved on epoch {epoch}, saving models')
-                    best_path, best_tag = self.save(tag='best_reward')
+                    # print(f'Best reward achieved on epoch {epoch}, saving models')
+                    best_path, best_tag = self.save()
                     best_reward = mean_reward
         if best_path is not None:
             self.load(best_path, best_tag)
@@ -271,7 +271,7 @@ class BehavioralCloningTrainer(OAITrainer):
         for trial in range(num_trials):
             self.eval_env.reset()
             for i, p in enumerate(self.agents):
-                p.reset(self.eval_env.state, i)
+                p.reset(self.eval_env.state)
             trial_reward, trial_shaped_r = 0, 0
             done = False
             timestep = 0
@@ -291,8 +291,8 @@ class BehavioralCloningTrainer(OAITrainer):
                 trial_reward += np.sum(info['sparse_r_by_agent'])
                 trial_shaped_r += np.sum(info['shaped_r_by_agent'])
                 timestep += 1
-                if (timestep+1) % 200 == 0:
-                    print(f'Reward of {trial_reward} at step {timestep}')
+                #if (timestep+1) % 200 == 0:
+                #    print(f'Reward of {trial_reward} at step {timestep}')
             average_reward.append(trial_reward)
             shaped_reward.append(trial_shaped_r)
         return np.mean(average_reward), np.mean(shaped_reward)

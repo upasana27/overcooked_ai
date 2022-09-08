@@ -136,7 +136,7 @@ def OAI_BC_featurize_state(mdp: OvercookedGridworld, state: OvercookedState, gri
         agent_obs = agent_obs[p_idx]
     else:
         agent_obs = np.stack(agent_obs, axis=0)
-    return {'visual_obs': np.array([[],[]]), 'agent_obs': agent_obs}
+    return {'agent_obs': agent_obs}
 
 def OAI_RL_encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_shape: tuple, horizon: int, p_idx=True):
     """
@@ -153,7 +153,7 @@ def OAI_RL_encode_state(mdp: OvercookedGridworld, state: OvercookedState, grid_s
     visual_obs = np.pad(visual_obs, padding_amount)
     if p_idx is not None:
         visual_obs = visual_obs[p_idx]
-    return {'visual_obs': visual_obs, 'agent_obs': np.array([[], []])}
+    return {'visual_obs': visual_obs}
 
 ENCODING_SCHEMES = {
     'OAI_feats': OAI_BC_featurize_state,

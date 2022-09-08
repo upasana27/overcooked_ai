@@ -33,6 +33,7 @@ class TwoSingleLSTMAgentTrainer(OAITrainer):
 class SB3SingleAgentWrapper(SB3Wrapper):
     ''' A wrapper for a stable baselines 3 agents that controls a single player '''
     def predict(self, obs):
+        print({k: v.shape for k, v in obs.items()}) 
         return self.agent.predict(obs)
 
     def get_distribution(self, obs: th.Tensor):

@@ -109,7 +109,7 @@ class MultiAgentSubtaskWorker(OAIAgent):
         t_idx = (p_idx + 1) % 2
         if dataset_file is not None:
             bct = BehavioralCloningTrainer(dataset_file, args)
-            bct.train_agents(epochs=250)
+            bct.train_agents(epochs=2)
             tm = bct.get_agent(p_idx=t_idx)
         else:
             tsa = TwoSingleAgentsTrainer(args)
@@ -124,7 +124,7 @@ class MultiAgentSubtaskWorker(OAIAgent):
             kwargs = {'single_subtask_id': i, 'shape_rewards': True, 'args': args}
             env = OvercookedSubtaskGymEnv(**p_kwargs, **kwargs)
             rl_sat = SingleAgentTrainer(tm, t_idx, args, env=env)
-            rl_sat.train_agents(epochs=250)
+            rl_sat.train_agents(epochs=2)
             agents.append(rl_sat.get_agent(p_idx))
         path = self.args.base_dir / 'agent_models' / self.name / self.args.layout_name
         Path(path).mkdir(parents=True, exist_ok=True)

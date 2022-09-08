@@ -110,8 +110,8 @@ class OvercookedDataset(Dataset):
     def __getitem__(self, idx):
         data_point = self.main_trials.iloc[idx]
         return {
-            'visual_obs': data_point['visual_obs'],
-            'agent_obs': data_point['agent_obs'],
+            'visual_obs': data_point['visual_obs'].squeeze(),
+            'agent_obs': data_point['agent_obs'].squeeze(),
             'joint_action': data_point['joint_action'],
             'subtasks': np.array( [[data_point['p1_curr_subtask'], data_point['p2_curr_subtask']],
                                    [data_point['p1_next_subtask'], data_point['p2_next_subtask']]])
