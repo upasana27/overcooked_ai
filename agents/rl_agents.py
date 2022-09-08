@@ -33,7 +33,6 @@ class TwoSingleLSTMAgentTrainer(OAITrainer):
 class SB3SingleAgentWrapper(SB3Wrapper):
     ''' A wrapper for a stable baselines 3 agents that controls a single player '''
     def predict(self, obs):
-        print({k: v.shape for k, v in obs.items()}) 
         return self.agent.predict(obs)
 
     def get_distribution(self, obs: th.Tensor):
@@ -93,7 +92,7 @@ class SingleAgentTrainer(OAITrainer):
                 if score > best_score:
                     best_path, best_tag = self.save()
                     best_score = score
-                if len(scores > 5) and score <= np.mean(scores[-4:-1]): # no improvement
+                if len(scores) > 5 and score <= np.mean(scores[-4:-1]): # no improvement
                     break
             self.agents[self.p_idx].learn(total_timesteps=10000)
         if best_path is not None:
@@ -150,7 +149,7 @@ class TwoSingleAgentsTrainer(OAITrainer):
                 if score > best_score:
                     best_path, best_tag = self.save()
                     best_score = score
-                if len(scores > 5) and score <= np.mean(scores[-4:-1]): # done training
+                if len(scores) > 5 and score <= np.mean(scores[-4:-1]): # done training
                     break
         if best_path is not None:
             self.load(best_path, best_tag)
@@ -194,7 +193,7 @@ class OneDoubleAgentTrainer(OAITrainer):
                 if score > best_score:
                     best_path, best_tag = self.save()
                     best_score = score
-                if len(scores > 5) and score <= np.mean(scores[-4:-1]): # done training
+                if len(scores) > 5 and score <= np.mean(scores[-4:-1]): # done training
                     break
         if best_path is not None:
             self.load(best_path, best_tag)

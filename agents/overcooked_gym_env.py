@@ -58,9 +58,7 @@ class OvercookedGymEnv(Env):
         if np.prod(self.agent_obs_shape) > 0:
             obs_dict["agent_obs"] =  spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
         self.observation_space = spaces.Dict(obs_dict)
-       
-        print(self.observation_space)
- 
+
         self.prev_state, self.prev_actions = deepcopy(self.state), (Action.STAY, Action.STAY)
         if all(self.agents):  # We control no agents
             self.action_space = spaces.Space()

@@ -50,7 +50,7 @@ class BehaviouralCloningPolicy(nn.Module):
             self.cnn_output_shape = 0
 
         # Define MLP for vector/feature based observations
-        self.mlp = MLP(input_dim=self.cnn_output_shape + agent_obs_shape[0] + self.subtasks_obs_size,
+        self.mlp = MLP(input_dim=self.cnn_output_shape + np.prod(agent_obs_shape) + self.subtasks_obs_size,
                        output_dim=hidden_dim, hidden_dim=hidden_dim, act=act)
         self.action_predictor = nn.Linear(hidden_dim, Action.NUM_ACTIONS)
 
@@ -161,8 +161,8 @@ class BehavioralCloningTrainer(OAITrainer):
         self.grid_shape = self.train_dataset.grid_shape
         self.eval_env = OvercookedGymEnv(grid_shape=self.grid_shape, args=args)
         obs = self.eval_env.get_obs()
-        visual_obs_shape = obs['visual_obs'][0].shape
-        agent_obs_shape = obs['agent_obs'][0].shape
+        visual_obs_shape = obs['visual_obs'][0].shape if 'visual_obs' in obs else 0
+        agent_obs_shape = obs['agent_obs'][0].shape if 'agent_obs' in obs else 0
         self.agents = [
             BehaviouralCloningAgent(visual_obs_shape, agent_obs_shape, 0, args),
             BehaviouralCloningAgent(visual_obs_shape, agent_obs_shape, 1, args)
@@ -180,7 +180,6 @@ class BehavioralCloningTrainer(OAITrainer):
 
     def train_on_batch(self, batch):
         """Train BC agent on a batch of data"""
-        # print({k: v for k,v in batch.items()})
         batch = {k: v.to(self.device) for k, v in batch.items()}
         action, subtasks = batch['joint_action'].long(), batch['subtasks'].long()
         curr_subtask, next_subtask = subtasks[:, 0], subtasks[:, 1]
@@ -188,7 +187,11 @@ class BehavioralCloningTrainer(OAITrainer):
         for i in range(self.num_players):
             self.optimizers[i].zero_grad()
             cs_i = F.one_hot(curr_subtask[:, i], num_classes=Subtasks.NUM_SUBTASKS)
-            obs = {k: batch[k][:, i] for k in ['visual_obs', 'agent_obs']}
+            obs = {}
+            if 'visual_obs' in batch:
+                obs['visual_obs'] = batch['visual_obs'][:, i]
+            if 'agent_obs' in batch:
+                obs['agent_obs'] = batch['agent_obs'][:, i]
             obs['subtask'] = cs_i
             preds = self.agents[i].forward(obs)
             tot_loss = 0
@@ -281,8 +284,8 @@ class BehavioralCloningTrainer(OAITrainer):
                 # Get next actions - we don't use overcooked gym env for this because we want to allow subtasks
                 joint_action = []
                 for i in range(2):
-                    agent_obs = {k: v[i] for k, v in obs.items()}
-                    action, _ = self.agents[i].predict(agent_obs, sample)
+                    player_obs = {k: v[i] for k, v in obs.items()}
+                    action, _ = self.agents[i].predict(player_obs, sample)
                     joint_action.append(action)
                 joint_action = tuple(joint_action)
                 # Environment step

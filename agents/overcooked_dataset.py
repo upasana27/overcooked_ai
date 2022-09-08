@@ -80,8 +80,10 @@ class OvercookedDataset(Dataset):
             env = self.layout_to_env[df['layout_name']]
             obs = self.encoding_fn(env.mdp, state, self.grid_shape, args.horizon)
             df['state'] = state
-            df['visual_obs'] = obs['visual_obs']
-            df['agent_obs'] = obs['agent_obs']
+            if 'visual_obs' in obs:
+                df['visual_obs'] = obs['visual_obs']
+            if 'agent_obs' in obs:
+                df['agent_obs'] = obs['agent_obs']
             return df
 
         self.main_trials['joint_action'] = self.main_trials['joint_action'].apply(str_to_actions)
@@ -93,9 +95,7 @@ class OvercookedDataset(Dataset):
         self.action_weights = np.ones(6)
         for action in Action.ALL_ACTIONS:
             self.action_weights[Action.ACTION_TO_INDEX[action]] = self.action_ratios[action] + 1 # Avoids nans if there are no subtasks of that type
-        print(self.action_weights)
         self.action_weights = 1.0 / self.action_weights
-        print(self.action_weights)
         self.action_weights = len(Action.ALL_ACTIONS) * self.action_weights / self.action_weights.sum()
 
     def get_action_weights(self):
@@ -109,13 +109,14 @@ class OvercookedDataset(Dataset):
 
     def __getitem__(self, idx):
         data_point = self.main_trials.iloc[idx]
-        return {
-            'visual_obs': data_point['visual_obs'].squeeze(),
-            'agent_obs': data_point['agent_obs'].squeeze(),
-            'joint_action': data_point['joint_action'],
-            'subtasks': np.array( [[data_point['p1_curr_subtask'], data_point['p2_curr_subtask']],
-                                   [data_point['p1_next_subtask'], data_point['p2_next_subtask']]])
-        }
+        item_dict = {'joint_action': data_point['joint_action'],
+                     'subtasks': np.array( [[data_point['p1_curr_subtask'], data_point['p2_curr_subtask']],
+                                           [data_point['p1_next_subtask'], data_point['p2_next_subtask']]])}
+        if 'visual_obs' in data_point:
+            item_dict['visual_obs'] = data_point['visual_obs'].squeeze()
+        if 'agent_obs' in data_point:
+            item_dict['agent_obs'] = data_point['agent_obs'].squeeze()
+        return item_dict
 
     def add_subtasks(self):
         curr_trial = None
