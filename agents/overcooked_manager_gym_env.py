@@ -11,11 +11,11 @@ import torch.nn.functional as F
 
 
 class OvercookedManagerGymEnv(OvercookedGymEnv):
-    def __init__(self, worker=None, teammate=None, grid_shape=None, shape_rewards=False, obs_type=None, randomize_start=False, args=None):
+    def __init__(self, worker=None, teammate=None, grid_shape=None, shape_rewards=False, randomize_start=False, args=None):
         assert worker.p_idx != teammate.p_idx
         self.worker_idx = worker.p_idx
         p1, p2 = (worker, teammate) if worker.p_idx == 0 else (teammate, worker)
-        super(OvercookedManagerGymEnv, self).__init__(p1, p2, grid_shape, shape_rewards, obs_type, randomize_start, args)
+        super(OvercookedManagerGymEnv, self).__init__(p1, p2, grid_shape, shape_rewards, randomize_start, args)
         assert any(self.agents) and self.p_idx is not None
         self.action_space = spaces.Discrete(Subtasks.NUM_SUBTASKS)
         self.observation_space = spaces.Dict({
@@ -27,14 +27,12 @@ class OvercookedManagerGymEnv(OvercookedGymEnv):
         obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
         if p_idx == self.worker_idx:
             obs['subtask'] = self.curr_subtask
-        if self.obs_type == th.tensor:
-            return {k: self.obs_type(v, device=self.device) for k, v in obs.items()}
-        else:
-            return {k: self.obs_type(v) for k, v in obs.items()}
+        return obs
 
     def step(self, action):
         # Action is the subtask for subtask agent to perform
-        self.curr_subtask = F.onehot(action, Subtasks.NUM_SUBTASKS)
+        self.curr_subtask = np.zeros(Subtasks.NUM_SUBTASKS)
+        self.curr_subtask[action] = 1
         joint_action = [Action.STAY, action.STAY]
         reward, done, info = 0, False, None
         while joint_action[self.worker_idx] != Action.INTERACT:

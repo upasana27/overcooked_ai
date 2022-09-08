@@ -11,15 +11,16 @@ import torch.nn.functional as F
 
 
 class OvercookedSubtaskGymEnv(OvercookedGymEnv):
-    def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, obs_type=None, randomize_start=True,
-                 use_curriculum=True, args=None):
+    def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, randomize_start=True,
+                 single_subtask_id=None, use_curriculum=False, args=None):
         self.use_curriculum = use_curriculum
-        if self.use_curriculum:
+        self.use_single_subtask = single_subtask_id is not None
+        assert not (use_curriculum and self.use_single_subtask)  # only one of them can be true
+        if self.use_single_subtask:
+            self.single_subtask, self.single_subtask_id = Subtasks.IDS_TO_SUBTASKS[single_subtask_id], single_subtask_id
+        elif self.use_curriculum:
             self.curr_lvl = 0
-        else:
-            self.curr_lvl = Subtasks.NUM_SUBTASKS
-        super(OvercookedSubtaskGymEnv, self).__init__(p1, p2, grid_shape, shape_rewards, obs_type, randomize_start,
-                                                      100, args)
+        super(OvercookedSubtaskGymEnv, self).__init__(p1, p2, grid_shape, shape_rewards, randomize_start, 100, args)
         assert any(self.agents) and self.p_idx is not None
         self.observation_space = spaces.Dict({
             "visual_obs": spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int),
@@ -31,10 +32,7 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
         if p_idx == self.p_idx:
             obs['subtask'] = self.goal_subtask_one_hot
-        if self.obs_type == th.tensor:
-            return {k: self.obs_type(v, device=self.device) for k, v in obs.items()}
-        else:
-            return {k: self.obs_type(v) for k, v in obs.items()}
+        return obs
 
     def get_proximity_reward(self, feature_locations):
         # Calculate reward for using the pass.
@@ -91,26 +89,29 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         return self.get_obs(self.p_idx), reward, done, info
 
     def reset(self, evaluate=False):
-        doable_subtask_in_curr_lvl = False
-        while not doable_subtask_in_curr_lvl:
+        acceptable_subtask = False
+        while not acceptable_subtask:
             self.env.reset()
             self.state = self.env.state
             subtask_mask = get_doable_subtasks(self.state, self.mdp.terrain_mtx, self.p_idx)
-            doable_subtask_in_curr_lvl = np.nonzero(subtask_mask)[0][0] <= self.curr_lvl
-        # JUST FOR TESTING ###
-        # print(f'doable subtasks for {self.p_idx}:')
-        # for subtask_id, doable in enumerate(subtask_mask):
-        #     if doable:
-        #         print(Subtasks.IDS_TO_SUBTASKS[subtask_id])
-        # self.render()
-        # input('Hit enter to start')
-        ###
-        # nothing past curr level can be selected
-        subtask_mask[self.curr_lvl + 1:] = 0
-        subtask_probs = subtask_mask / np.sum(subtask_mask)
-        self.goal_subtask = np.random.choice(Subtasks.SUBTASKS, p=subtask_probs)
-        self.goal_subtask_id = th.tensor(Subtasks.SUBTASKS_TO_IDS[self.goal_subtask]).to(self.device)
-        self.goal_subtask_one_hot = F.one_hot(self.goal_subtask_id, num_classes=Subtasks.NUM_SUBTASKS)
+            if self.single_subtask:
+                acceptable_subtask = subtask_mask[self.single_subtask_id] == 1
+            elif self.use_curriculum:
+                acceptable_subtask = np.nonzero(subtask_mask)[0][0] <= self.curr_lvl
+            else:
+                acceptable_subtask = True
+
+        if self.use_single_subtask:
+            self.goal_subtask = self.single_subtask
+        else:
+            if self.use_curriculum:
+                # nothing past curr level can be selected
+                subtask_mask[self.curr_lvl + 1:] = 0
+            subtask_probs = subtask_mask / np.sum(subtask_mask)
+            self.goal_subtask = np.random.choice(Subtasks.SUBTASKS, p=subtask_probs)
+        self.goal_subtask_id = Subtasks.SUBTASKS_TO_IDS[self.goal_subtask]
+        self.goal_subtask_one_hot = np.zeros(Subtasks.NUM_SUBTASKS)
+        self.goal_subtask_one_hot[self.goal_subtask_id] = 1
         for i in range(2):
             if isinstance(self.agents[i], OAIAgent):
                 self.agents[i].reset(self.state)

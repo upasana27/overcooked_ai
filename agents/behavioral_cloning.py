@@ -61,11 +61,11 @@ class BehaviouralCloningPolicy(nn.Module):
         mlp_input = []
         # Concatenate all input features before passing them to MLP
         if self.use_visual_obs:
-            mlp_input.append(self.cnn.forward(obs[0]))
+            mlp_input.append(self.cnn.forward(obs['visual_obs']))
         if self.use_agent_obs:
-            mlp_input.append(obs[1])
+            mlp_input.append(obs['agent_obs'])
         if self.use_subtasks:
-            mlp_input.append(obs[2])
+            mlp_input.append(obs['subtask'])
         return self.mlp.forward(th.cat(mlp_input, dim=-1))
 
     def forward(self, obs):
@@ -91,7 +91,7 @@ class BehaviouralCloningAgent(OAIAgent):
         if self.use_subtasks:
             self.subtask_predictor = nn.Linear(hidden_dim, Subtasks.NUM_SUBTASKS)
             self.apply(weights_init_)
-            self.to(self.device)
+        self.to(self.device)
 
     def _get_constructor_parameters(self) -> Dict[str, Any]:
         """
@@ -112,9 +112,9 @@ class BehaviouralCloningAgent(OAIAgent):
         return (action_logits, self.subtask_predictor(z)) if self.use_subtasks else action_logits
 
     def predict(self, obs, sample=True):
-        obs = [obs['visual_obs'], obs['agent_obs']]
-        obs = (*obs, self.curr_subtask) if self.use_subtasks else obs
-        obs = [o.unsqueeze(dim=0).to(self.device) for o in obs]
+        obs = {k: th.tensor(v, device=self.device).unsqueeze(0) for k, v in obs.items()}
+        if self.use_subtasks:
+            obs['subtask'] = self.curr_subtask.unsqueeze(0)
         logits = self.forward(obs)
         action_logits = logits[0] if self.use_subtasks else logits
         action = Categorical(logits=action_logits).sample() if sample else th.argmax(action_logits, dim=-1)
@@ -131,8 +131,9 @@ class BehaviouralCloningAgent(OAIAgent):
         return action, None
 
     def get_distribution(self, obs: th.Tensor):
-        obs = (*obs, self.curr_subtask) if self.use_subtasks else obs
-        obs = [o.unsqueeze(dim=0).to(self.device) for o in obs]
+        obs = {k: th.tensor(v, device=self.device).unsqueeze(0) for k, v in obs.items()}
+        if self.use_subtasks:
+            obs['subtask'] = self.curr_subtask.unsqueeze(0)
         return self.policy.get_distribution(obs)
 
     def reset(self, state):
@@ -181,15 +182,15 @@ class BehavioralCloningTrainer(OAITrainer):
         """Train BC agent on a batch of data"""
         # print({k: v for k,v in batch.items()})
         batch = {k: v.to(self.device) for k, v in batch.items()}
-        vo, ao, action, subtasks = batch['visual_obs'].float(), batch['agent_obs'].float(), \
-                                   batch['joint_action'].long(), batch['subtasks'].long()
-
+        action, subtasks = batch['joint_action'].long(), batch['subtasks'].long()
         curr_subtask, next_subtask = subtasks[:, 0], subtasks[:, 1]
         metrics = {}
         for i in range(self.num_players):
             self.optimizers[i].zero_grad()
             cs_i = F.one_hot(curr_subtask[:, i], num_classes=Subtasks.NUM_SUBTASKS)
-            preds = self.agents[i].forward((vo[:, i], ao[:, i], cs_i))
+            obs = {k: batch[k][:, i] for k in ['visual_obs', 'agent_obs']}
+            obs['subtask'] = cs_i
+            preds = self.agents[i].forward(obs)
             tot_loss = 0
             if self.use_subtasks:
                 # Train on subtask prediction task
@@ -296,8 +297,8 @@ class BehavioralCloningTrainer(OAITrainer):
             shaped_reward.append(trial_shaped_r)
         return np.mean(average_reward), np.mean(shaped_reward)
 
-    def get_agent(self, idx):
-        return self.agents[idx]
+    def get_agent(self, p_idx):
+        return self.agents[p_idx]
 
 
 

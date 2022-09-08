@@ -144,6 +144,6 @@ class OAITrainer(ABC):
     def load(self, path: Union[str, None]=None, tag: Union[str, None]=None):
         ''' Loads each agent that the trainer is training '''
         path = path or self.args.base_dir / 'agent_models' / 'IL_agents' / self.args.layout_name
-        tag = tag or (self.args.exp_name + '_' + self.dataset.replace('.pickle', ''))
+        tag = tag or self.args.exp_name
         for i in range(2):
             self.agents[i] = self.agents[i].load(path / (tag + f'_p{i + 1}'), self.args)

@@ -16,7 +16,7 @@ import torch as th
 class OvercookedGymEnv(Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, obs_type=None, randomize_start=True,
+    def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, randomize_start=True,
                  horizon=None, args=None):
         self.args = args
         self.device = args.device
@@ -46,7 +46,6 @@ class OvercookedGymEnv(Env):
         self.grid_shape = grid_shape or self.env.mdp.shape
         self.shape_rewards = shape_rewards
         self.step_count = 0
-        self.obs_type = obs_type or np.array
         # If we play one agent, we play the agent that is not defined, otherwise both agents are equal
         self.p_idx = (1 if self.agents[0] else 0) if any(self.agents) else None
         obs = self.reset()
@@ -77,9 +76,6 @@ class OvercookedGymEnv(Env):
     def set_agent(self, agent, idx):
         self.agents[idx] = agent
 
-    def set_obs_type(self, ret_type=np.array):
-        self.obs_type = ret_type
-
     def setup_visualization(self):
         self.visualization_enabled = True
         pygame.init()
@@ -90,10 +86,7 @@ class OvercookedGymEnv(Env):
 
     def get_obs(self, p_idx=None):
         obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
-        if self.obs_type == th.tensor:
-            return {k: self.obs_type(v, device=self.device) for k, v in obs.items()}
-        else:
-            return {k: self.obs_type(v) for k, v in obs.items()}
+        return obs
 
     def step(self, action):
         if all(self.agents): # We control no agents

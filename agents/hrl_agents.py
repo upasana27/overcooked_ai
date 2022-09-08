@@ -27,10 +27,11 @@ def create_rl_worker(dataset_file, p_idx, args):
     # tsat = TwoSingleAgentsTrainer(args)
     # tsat.train_agents(epochs=2)
     # tm = tsat.get_agent(p_idx)
+    # TODO Train 12 individual agents, each for a respective subtask
 
     # RL single subtask agents trained with BC partner
     p_kwargs = {'p1': tm} if t_idx == 0 else {'p2': tm}
-    kwargs = {'shape_rewards': True, 'obs_type': th.tensor, 'args': args}
+    kwargs = {'shape_rewards': True, 'args': args}
     env = OvercookedSubtaskGymEnv(**p_kwargs, **kwargs)
     rl_sat = SingleAgentTrainer(tm, t_idx, args, env=env)
     rl_sat.train_agents(epochs=2000)
@@ -56,6 +57,82 @@ def is_held_obj(player, object):
            and object.position == (x, y)
 
 
+class MultiAgentSubtaskWorker(OAIAgent):
+    def __init__(self, agents, p_idx, args):
+        super(OAIAgent, self).__init__('multi_agent_subtask_worker', p_idx, args)
+        self.agents = agents
+
+    def predict(self, obs: th.Tensor):
+        assert 'subtask' in obs.keys()
+        subtask_one_hot = obs['subtask']
+        subtask_id = np.nonzero(subtask_one_hot)[0][0]
+        return self.agents[subtask_id].predict(obs)
+
+    def get_distribution(self, obs: th.Tensor):
+        assert 'subtask' in obs.keys()
+        subtask_one_hot = obs['subtask']
+        subtask_id = np.nonzero(subtask_one_hot)[0][0]
+        return self.agents[subtask_id].get_distribution(obs)
+
+    def _get_constructor_parameters(self):
+        return dict(name=self.name, p_idx=self.p_idx, args=self.args)
+
+    def save(self, path: str) -> None:
+        args = get_args_to_save(self.args)
+        agent_path = path + '_subtask_agents_dir'
+        Path(agent_path).mkdir(parents=True, exist_ok=True)
+
+        save_dict = {'sb3_model_type': type(self.agent), 'agent_paths': [],
+                     'const_args': self._get_constructor_parameters(), 'args': args}
+        for i, agent in enumerate(agents):
+            agent_path_i = agent_path + '/agent{i}'
+            agent.save(path)
+            save_dict['agent_paths'].append(agent_path_i)
+        th.save(save_dict, path)
+
+    @classmethod
+    def load(cls, path: str, args):
+        device = args.device
+        saved_variables = th.load(path, map_location=device)
+        set_args_from_load(saved_variables['args'], args)
+
+        # Load weights
+        agents = []
+        for agent_path in save_dict['agent_paths']:
+            agent = saved_variables['sb3_model_type'].load(agent_path)
+            agent.to(device)
+            agents.append(agent)
+        return cls(agents=agents, **saved_variables['const_data'], **kwargs)
+
+    @classmethod
+    def create_model_from_scratch(cls, p_idx, args, dataset_file=None) -> 'OAIAgent':
+        t_idx = (p_idx + 1) % 2
+        if dataset_file is not None:
+            bct = BehavioralCloningTrainer(dataset_file, args)
+            bct.train_agents(epochs=1)
+            tm = bct.get_agent(p_idx=t_idx)
+        else:
+            tsa = TwoSingleAgentsTrainer(args)
+            tsa.train_agents(epochs=1)
+            tm = tsa.get_agent(p_idx=t_idx)
+
+        # TODO Train 12 individual agents, each for a respective subtask
+        agents = []
+        for i in range(Subtasks.NUM_SUBTASKS):
+            # RL single subtask agents trained with BC partner
+            p_kwargs = {'p1': tm} if t_idx == 0 else {'p2': tm}
+            kwargs = {'single_subtask_id': i, 'shape_rewards': True, 'args': args}
+            env = OvercookedSubtaskGymEnv(**p_kwargs, **kwargs)
+            rl_sat = SingleAgentTrainer(tm, t_idx, args, env=env)
+            rl_sat.train_agents(epochs=1)
+            agents.append(rl_sat.get_agent(p_idx))
+        path = self.args.base_dir / 'agent_models' / self.name / self.args.layout_name
+        Path(path).mkdir(parents=True, exist_ok=True)
+        tag = self.args.exp_name
+        self.save(str(path / tag))
+        return cls(agents=agents, p_idx=p_idx, args=args), tm
+
+
 class Manager(OAIAgent):
     def __init__(self, worker, p_idx, args):
         super(Manager, self).__init__(f'base_manager', p_idx, args)
@@ -77,9 +154,7 @@ class Manager(OAIAgent):
         pass
 
     def predict(self, obs, sample=True):
-        obs = [(th.tensor(o, dtype=th.float32).to(self.device) if not isinstance(o, th.Tensor) else o.to(self.device))
-               for o in [obs['visual_obs'], obs['agent_obs']]]
-        obs = [o.unsqueeze(dim=0).to(self.device) for o in (*obs, self.curr_subtask)]
+        obs['subtask'] = self.curr_subtask_id
         action_logits = self.worker.forward(obs)
         action = Categorical(logits=action_logits).sample() if sample else th.argmax(action_logits, dim=-1)
         return action
@@ -123,9 +198,8 @@ class RLManagerWrapper(SB3Wrapper, Manager):
 
     def select_next_subtask(self, curr_state):
         obs = self.encoding_fn(curr_state)
-        obs = {k: self.obs_type(v, device=self.device) for k, v in obs.items()}
-        subtask_idx = self.manager.predict(obs)[0]
-        return F.one_hot(subtask_idx, Subtasks.NUM_SUBTASKS)
+        # obs = {k: self.obs_type(v, device=self.device) for k, v in obs.items()}
+        self.curr_subtask_id = self.manager.predict(obs)[0]
 
     def step(self, new_state, joint_action):
         pass
@@ -136,8 +210,7 @@ class RLManagerWrapper(SB3Wrapper, Manager):
 class RLManagerTrainer(SingleAgentTrainer):
     ''' Train an RL agent to play with a provided agent '''
     def __init__(self, worker, teammate, teammate_idx, args):
-        env = OvercookedManagerGymEnv(worker=worker, teammate=teammate, shape_rewards=True, obs_type=th.tensor,
-                                      randomize_start=False, args=args)
+        env = OvercookedManagerGymEnv(worker=worker, teammate=teammate, shape_rewards=True, randomize_start=False, args=args)
         self.worker = worker
         super(RLManagerTrainer, self).__init__(teammate, teammate_idx, args, env=env)
         assert worker.p_idx == self.p_idx and teammate.p_idx == self.t_idx
@@ -285,12 +358,12 @@ class ValueBasedManager(Manager):
 
     def select_next_subtask(self, curr_state):
         subtask_values = self.get_subtask_values(curr_state)
-        subtask_id = th.argmax(subtask_values.squeeze(), dim=-1)
-        self.curr_subtask = F.one_hot(subtask_id, Subtasks.NUM_SUBTASKS).to(self.device)
+        subtask_id = np.argmax(subtask_values.squeeze(), dim=-1)
+        self.curr_subtask_id = subtask_id
         print('new subtask', Subtasks.IDS_TO_SUBTASKS[subtask_id.item()])
 
-    def reset(self, state, player_idx):
-        super().reset(state, player_idx)
+    def reset(self, state):
+        super().reset(state)
         self.init_subtask_values()
 
 class DistBasedManager(Manager):
@@ -333,10 +406,12 @@ class DistBasedManager(Manager):
 if __name__ == '__main__':
     args = get_arguments()
     p_idx, t_idx = 0, 1
-    worker = create_rl_worker(args.dataset, p_idx, args)
-    tsat = TwoSingleAgentsTrainer(args)
-    tsat.train_agents(epochs=2)
-    teammate = tsat.get_agent(t_idx)
+    worker, teammate = MultiAgentSubtaskWorker.create_model_from_scratch(p_idx, args, dataset_file=args.dataset)
+
+    #create_rl_worker(args.dataset, p_idx, args)
+    # tsat = TwoSingleAgentsTrainer(args)
+    # tsat.train_agents(epochs=2)
+    # teammate = tsat.get_agent(t_idx)
     RLManagerTrainer(worker, teammate, t_idx, args)
     RLManagerTrainer.train_agents(epochs=100)
 

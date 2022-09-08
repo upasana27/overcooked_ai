@@ -58,7 +58,7 @@ class SingleAgentTrainer(OAITrainer):
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.t_idx, self.p_idx = teammate_idx, (teammate_idx + 1) % 2
         p_kwargs = {'p1': teammate} if teammate_idx == 0 else {'p2': teammate}
-        kwargs = {'shape_rewards': True, 'obs_type': th.tensor, 'args': args}
+        kwargs = {'shape_rewards': True, 'args': args}
         self.env = env or OvercookedGymEnv(**p_kwargs, **kwargs)
 
         policy_kwargs = dict(
@@ -66,8 +66,11 @@ class SingleAgentTrainer(OAITrainer):
             features_extractor_kwargs=dict(features_dim=256),
         )
         sb3_agent = PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1)
+        sb3_agent.policy.to(self.device)
         learner = self.wrap_agent(sb3_agent)
         self.agents = [teammate, learner] if teammate_idx == 0 else [learner, teammate]
+        for agent in self.agents:
+            agent.policy.to(self.device)
 
     def wrap_agent(self, sb3_agent):
         return SB3SingleAgentWrapper(sb3_agent, f'rl_single_agent_p{self.p_idx + 1}', self.p_idx, self.args)
@@ -107,7 +110,7 @@ class TwoSingleAgentsTrainer(OAITrainer):
         self.device = args.device
         self.args = args
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
-        kwargs = {'shape_rewards': True, 'obs_type': th.tensor, 'args': args}
+        kwargs = {'shape_rewards': True, 'args': args}
         self.envs = [OvercookedGymEnv(p2='temp', **kwargs), OvercookedGymEnv(p1='temp', **kwargs)]
 
         policy_kwargs = dict(
@@ -121,6 +124,8 @@ class TwoSingleAgentsTrainer(OAITrainer):
         self.eval_env = OvercookedGymEnv(p1=self.agents[0], p2=self.agents[1], args=args)
         self.envs[0].set_agent(self.agents[1], idx=1)
         self.envs[1].set_agent(self.agents[0], idx=0)
+        for agent in self.agents:
+            agent.policy.to(self.device)
 
     def train_agents(self, epochs=1000, exp_name=None):
         exp_name = exp_name or self.args.exp_name
@@ -154,7 +159,7 @@ class OneDoubleAgentTrainer(OAITrainer):
         super(OneDoubleAgentTrainer, self).__init__('one_double_agent', args)
         self.device = args.device
         self.args = args
-        self.env = OvercookedGymEnv(obs_type= th.tensor, shape_rewards=True, args=args)
+        self.env = OvercookedGymEnv(shape_rewards=True, args=args)
         policy_kwargs = dict(
             features_extractor_class=OAIDoublePlayerFeatureExtractor,
             features_extractor_kwargs=dict(features_dim=256),
@@ -162,6 +167,8 @@ class OneDoubleAgentTrainer(OAITrainer):
         self.agent = PPO("MultiInputPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1)
         self.agents = [SB3DoubleAgentWrapper(self.agent, f'rl_one_double_agent_p{i + 1}', i, args) for i in range(2)]
         self.eval_env = OvercookedGymEnv(args=args)
+        for agent in self.agents:
+            agent.policy.to(self.device)
 
     def train_agents(self, epochs=1000, exp_name=None):
         exp_name = exp_name or self.args.exp_name
