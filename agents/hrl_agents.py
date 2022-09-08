@@ -109,11 +109,11 @@ class MultiAgentSubtaskWorker(OAIAgent):
         t_idx = (p_idx + 1) % 2
         if dataset_file is not None:
             bct = BehavioralCloningTrainer(dataset_file, args)
-            bct.train_agents(epochs=1)
+            bct.train_agents(epochs=250)
             tm = bct.get_agent(p_idx=t_idx)
         else:
             tsa = TwoSingleAgentsTrainer(args)
-            tsa.train_agents(epochs=1)
+            tsa.train_agents(epochs=1000)
             tm = tsa.get_agent(p_idx=t_idx)
 
         # TODO Train 12 individual agents, each for a respective subtask
@@ -124,7 +124,7 @@ class MultiAgentSubtaskWorker(OAIAgent):
             kwargs = {'single_subtask_id': i, 'shape_rewards': True, 'args': args}
             env = OvercookedSubtaskGymEnv(**p_kwargs, **kwargs)
             rl_sat = SingleAgentTrainer(tm, t_idx, args, env=env)
-            rl_sat.train_agents(epochs=1)
+            rl_sat.train_agents(epochs=250)
             agents.append(rl_sat.get_agent(p_idx))
         path = self.args.base_dir / 'agent_models' / self.name / self.args.layout_name
         Path(path).mkdir(parents=True, exist_ok=True)
@@ -412,7 +412,7 @@ if __name__ == '__main__':
     # tsat = TwoSingleAgentsTrainer(args)
     # tsat.train_agents(epochs=2)
     # teammate = tsat.get_agent(t_idx)
-    RLManagerTrainer(worker, teammate, t_idx, args)
-    RLManagerTrainer.train_agents(epochs=100)
+    rlmt = RLManagerTrainer(worker, teammate, t_idx, args)
+    rlmt.train_agents(epochs=250)
 
 

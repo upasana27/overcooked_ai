@@ -139,6 +139,6 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         if np.sum(results[:, 0]) == num_trials and self.curr_lvl < Subtasks.NUM_SUBTASKS:
             print(f'Going from level {self.curr_lvl} to {self.curr_lvl + 1}')
             self.curr_lvl += 1
-        return np.sum(results[:, 0])
+        return np.sum(results[:, 0]), np.sum(results[:, 0]) == num_trials
 
 

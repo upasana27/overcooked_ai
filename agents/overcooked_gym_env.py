@@ -164,7 +164,7 @@ class OvercookedGymEnv(Env):
             self.agents[0] = None
         if reset_p2_to_none:
             self.agents[1] = None
-        return np.mean(rewards)
+        return np.mean(rewards), False
 
 
     def run_full_episode(self):

@@ -81,16 +81,19 @@ class SingleAgentTrainer(OAITrainer):
                          reinit=True, name=exp_name + '_' + self.agents[self.p_idx].name, mode=self.args.wandb_mode)
         for i in range(2):
             self.agents[i].policy.train()
-        best_cum_rew = 0
+        best_score, scores = 0, []
         best_path, best_tag = None, None
         for epoch in range(epochs):
             if epoch % 10 == 0:
-                cum_rew = self.env.evaluate(self.agents[self.p_idx], num_trials=1)
-                print(f'Episode eval at epoch {epoch}: {cum_rew}')
-                wandb.log({'eval_true_reward': cum_rew, 'epoch': epoch})
-                if cum_rew > best_cum_rew:
+                score, done_training = self.env.evaluate(self.agents[self.p_idx], num_trials=1)
+                scores.append(score)
+                print(f'Episode eval at epoch {epoch}: {score}')
+                wandb.log({'eval_true_score': score, 'epoch': epoch})
+                if score > best_score:
                     best_path, best_tag = self.save()
-                    best_cum_rew = cum_rew
+                    best_score = score
+                if len(scores > 5) and score <= np.mean(scores[-4:-1]): # no improvement
+                    break
             self.agents[self.p_idx].learn(total_timesteps=10000)
         if best_path is not None:
             self.load(best_path, best_tag)
@@ -133,18 +136,21 @@ class TwoSingleAgentsTrainer(OAITrainer):
                          reinit=True, name=exp_name + '_rl_two_single_agents', mode=self.args.wandb_mode)
         for i in range(2):
             self.agents[i].policy.train()
-        best_cum_rew = 0
+        best_score, scores = 0, []
         best_path, best_tag = None, None
         for epoch in range(epochs):
             self.agents[0].learn(total_timesteps=1000)
             self.agents[1].learn(total_timesteps=1000)
             if epoch % 10 == 0:
-                cum_rew = self.eval_env.run_full_episode()
-                print(f'Episode eval at epoch {epoch}: {cum_rew}')
-                wandb.log({'eval_true_reward': cum_rew, 'epoch': epoch})
-                if cum_rew > best_cum_rew:
+                score = self.eval_env.run_full_episode()
+                scores.append(score)
+                print(f'Episode eval at epoch {epoch}: {score}')
+                wandb.log({'eval_true_reward': score, 'epoch': epoch})
+                if score > best_score:
                     best_path, best_tag = self.save()
-                    best_cum_rew = cum_rew
+                    best_score = score
+                if len(scores > 5) and score <= np.mean(scores[-4:-1]): # done training
+                    break
         if best_path is not None:
             self.load(best_path, best_tag)
         run.finish()
@@ -175,17 +181,20 @@ class OneDoubleAgentTrainer(OAITrainer):
         run = wandb.init(project="overcooked_ai_test", entity=self.args.wandb_ent, dir=str(self.args.base_dir / 'wandb'),
                          reinit=True, name=exp_name + '_rl_double_agent', mode=self.args.wandb_mode)
         self.agent.policy.train()
-        best_cum_rew = 0
+        best_score, scores = 0, []
         best_path, best_tag = None, None
         for epoch in range(epochs):
             self.agent.learn(total_timesteps=10000)
             if epoch % 10 == 0:
-                cum_rew = self.run_full_episode()
-                print(f'Episode eval at epoch {epoch}: {cum_rew}')
-                wandb.log({'eval_true_reward': cum_rew, 'epoch': epoch})
-                if cum_rew > best_cum_rew:
+                score = self.run_full_episode()
+                scores.append(score)
+                print(f'Episode eval at epoch {epoch}: {score}')
+                wandb.log({'eval_true_reward': score, 'epoch': epoch})
+                if score > best_score:
                     best_path, best_tag = self.save()
-                    best_cum_rew = cum_rew
+                    best_score = score
+                if len(scores > 5) and score <= np.mean(scores[-4:-1]): # done training
+                    break
         if best_path is not None:
             self.load(best_path, best_tag)
         run.finish()
