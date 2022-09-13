@@ -17,12 +17,14 @@ class OvercookedGymEnv(Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, randomize_start=True,
-                 horizon=None, args=None):
+                 return_traj_id=False, horizon=None, args=None):
         self.args = args
         self.device = args.device
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.agents = [p1, p2]
         self.mdp = OvercookedGridworld.from_layout_name(args.layout_name)
+        self.return_traj_id = return_traj_id
+        self.traj_id = 0
         ss_fn = None # Defaults to standard start fn
         if randomize_start:
             from overcooked_ai_py.planning.planners import MediumLevelActionManager
@@ -57,6 +59,8 @@ class OvercookedGymEnv(Env):
             obs_dict["visual_obs"] = spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int)
         if np.prod(self.agent_obs_shape) > 0:
             obs_dict["agent_obs"] =  spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
+        if return_traj_id:
+            obs_dict["traj_id"] = spaces.Box(0, 1e6, (1,), dtype=np.int)
         self.observation_space = spaces.Dict(obs_dict)
 
         self.prev_state, self.prev_actions = deepcopy(self.state), (Action.STAY, Action.STAY)
@@ -81,6 +85,8 @@ class OvercookedGymEnv(Env):
 
     def get_obs(self, p_idx=None):
         obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
+        if self.return_traj_id:
+            obs['traj_id'] = (self.traj_id,)
         return obs
 
     def step(self, action):
@@ -116,6 +122,7 @@ class OvercookedGymEnv(Env):
     def reset(self):
         self.env.reset()
         self.state = self.env.state
+        self.traj_id += 1
         for i in range(2):
             if isinstance(self.agents[i], OAIAgent):
                 self.agents[i].reset(self.state)

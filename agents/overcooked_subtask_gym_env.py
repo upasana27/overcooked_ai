@@ -32,6 +32,8 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
         if p_idx == self.p_idx:
             obs['subtask'] = self.goal_subtask_one_hot
+        if self.return_traj_id:
+            obs['traj_id'] = (self.traj_id,)
         return obs
 
     def get_proximity_reward(self, feature_locations):
@@ -109,6 +111,7 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
                 subtask_mask[self.curr_lvl + 1:] = 0
             subtask_probs = subtask_mask / np.sum(subtask_mask)
             self.goal_subtask = np.random.choice(Subtasks.SUBTASKS, p=subtask_probs)
+        self.traj_id += 1
         self.goal_subtask_id = Subtasks.SUBTASKS_TO_IDS[self.goal_subtask]
         self.goal_subtask_one_hot = np.zeros(Subtasks.NUM_SUBTASKS)
         self.goal_subtask_one_hot[self.goal_subtask_id] = 1

@@ -18,11 +18,14 @@ class OvercookedManagerGymEnv(OvercookedGymEnv):
         super(OvercookedManagerGymEnv, self).__init__(p1, p2, grid_shape, shape_rewards, randomize_start, args)
         assert any(self.agents) and self.p_idx is not None
         self.action_space = spaces.Discrete(Subtasks.NUM_SUBTASKS)
+        self.traj_id = 0
 
     def get_obs(self, p_idx=None):
         obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
         if p_idx == self.worker_idx:
             obs['subtask'] = self.curr_subtask
+        if self.return_traj_id:
+            obs['traj_id'] = (self.traj_id,)
         return obs
 
     def step(self, action):
@@ -53,6 +56,7 @@ class OvercookedManagerGymEnv(OvercookedGymEnv):
     def reset(self):
         self.env.reset()
         self.state = self.env.state
+        self.traj_id += 1
         for i in range(2):
             if isinstance(self.agents[i], OAIAgent):
                 self.agents[i].reset(self.state)

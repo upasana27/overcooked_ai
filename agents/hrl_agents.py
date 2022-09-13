@@ -159,6 +159,11 @@ class Manager(OAIAgent):
         action = Categorical(logits=action_logits).sample() if sample else th.argmax(action_logits, dim=-1)
         return action
 
+    def get_distribution(self, obs, sample=True):
+        obs['subtask'] = self.curr_subtask_id
+        return self.worker.forward(obs)
+
+
     def step(self, new_state, joint_action):
         if self.p_idx is None:
             raise ValueError('Player idx must be set before Manager.step can be called')
