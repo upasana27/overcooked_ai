@@ -48,16 +48,18 @@ class OvercookedGymEnv(Env):
         self.step_count = 0
         # If we play one agent, we play the agent that is not defined, otherwise both agents are equal
         self.p_idx = (1 if self.agents[0] else 0) if any(self.agents) else None
+        self.t_idx = (self.p_idx + 1) % 2 if self.p_idx is not None else None
         obs = self.reset()
-        self.visual_obs_shape, self.agent_obs_shape = obs['visual_obs'].shape, obs['agent_obs'].shape
+        self.visual_obs_shape = obs['visual_obs'].shape if 'visual_obs' in obs else 0
+        self.agent_obs_shape = obs['agent_obs'].shape if 'agent_obs' in obs else 0
         # TODO improve bounds for each dimension
         # Currently 20 is the default value for recipe time (which I believe is the largest value used
-        obs_dict = {}
+        self.obs_dict = {}
         if np.prod(self.visual_obs_shape) > 0:
-            obs_dict["visual_obs"] = spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int)
+            self.obs_dict["visual_obs"] = spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int)
         if np.prod(self.agent_obs_shape) > 0:
-            obs_dict["agent_obs"] =  spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
-        self.observation_space = spaces.Dict(obs_dict)
+            self.obs_dict["agent_obs"] =  spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
+        self.observation_space = spaces.Dict(self.obs_dict)
 
         self.prev_state, self.prev_actions = deepcopy(self.state), (Action.STAY, Action.STAY)
         if all(self.agents):  # We control no agents

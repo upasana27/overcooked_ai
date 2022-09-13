@@ -22,16 +22,13 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
             self.curr_lvl = 0
         super(OvercookedSubtaskGymEnv, self).__init__(p1, p2, grid_shape, shape_rewards, randomize_start, 100, args)
         assert any(self.agents) and self.p_idx is not None
-        self.observation_space = spaces.Dict({
-            "visual_obs": spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int),
-            "agent_obs": spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32),
-            "subtask": spaces.Box(0, 1, (Subtasks.NUM_SUBTASKS,), dtype=np.int32)
-        })
+        self.obs_dict['subtask'] =  spaces.Box(0, 1, (1,), dtype=np.int32)
+        self.observation_space = spaces.Dict(self.obs_dict)
 
     def get_obs(self, p_idx=None):
         obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
         if p_idx == self.p_idx:
-            obs['subtask'] = self.goal_subtask_one_hot
+            obs['subtask'] = [self.goal_subtask_id]
         return obs
 
     def get_proximity_reward(self, feature_locations):
@@ -50,7 +47,7 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
                 dist = self.mlam.motion_planner.min_cost_to_feature((adj_tile, Direction.NORTH), feature_locations)
                 if dist < smallest_dist:
                     smallest_dist = dist
-        smallest_dist = min(smallest_dist, curr_dist + 1)
+        smallest_dist = min(smallest_dist, curr_dist + 2)
         # Reward proportional to how much time is saved from using the pass
         return (curr_dist - smallest_dist) * 0.1
 
@@ -70,12 +67,12 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         next_state, _, done, info = self.env.step(joint_action)
         self.state = self.env.state
 
-        reward = -0.0001 # existence penalty
+        reward = -0.01 # existence penalty
         if joint_action[self.p_idx] == Action.INTERACT:
             subtask = calculate_completed_subtask(self.mdp.terrain_mtx, self.prev_state, self.state, self.p_idx)
             if subtask is not None:
                 done = True
-                reward = 1 if subtask == self.goal_subtask_id else -0.1
+                reward = 1 if subtask == self.goal_subtask_id else -1
                 if self.goal_subtask == 'put_onion_closer':
                     pot_locations = self.mdp.get_pot_locations()
                     reward += self.get_proximity_reward(pot_locations)
@@ -95,7 +92,7 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
             self.state = self.env.state
             subtask_mask = get_doable_subtasks(self.state, self.mdp.terrain_mtx, self.p_idx)
             if self.single_subtask:
-                acceptable_subtask = subtask_mask[self.single_subtask_id] == 1
+                acceptable_subtask = subtask_mask[self.single_subtask_id] == 1 or self.single_subtask_id == Subtasks.SUBTASKS_TO_IDS['unknown']
             elif self.use_curriculum:
                 acceptable_subtask = np.nonzero(subtask_mask)[0][0] <= self.curr_lvl
             else:
@@ -110,8 +107,6 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
             subtask_probs = subtask_mask / np.sum(subtask_mask)
             self.goal_subtask = np.random.choice(Subtasks.SUBTASKS, p=subtask_probs)
         self.goal_subtask_id = Subtasks.SUBTASKS_TO_IDS[self.goal_subtask]
-        self.goal_subtask_one_hot = np.zeros(Subtasks.NUM_SUBTASKS)
-        self.goal_subtask_one_hot[self.goal_subtask_id] = 1
         for i in range(2):
             if isinstance(self.agents[i], OAIAgent):
                 self.agents[i].reset(self.state)
@@ -128,7 +123,7 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
                 action = main_agent.predict(obs)[0]
                 obs, reward, done, info = self.step(action)
 
-            if reward == 1:
+            if reward >= 1:
                 results[self.goal_subtask_id][0] += 1
             else:
                 results[self.goal_subtask_id][1] += 1
@@ -136,7 +131,7 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         for subtask in Subtasks.SUBTASKS:
             subtask_id = Subtasks.SUBTASKS_TO_IDS[subtask]
             print(f'{subtask_id} - successes: {results[subtask_id][0]}, failures: {results[subtask_id][1]}')
-        if np.sum(results[:, 0]) == num_trials and self.curr_lvl < Subtasks.NUM_SUBTASKS:
+        if self.use_curriculum and np.sum(results[:, 0]) == num_trials and self.curr_lvl < Subtasks.NUM_SUBTASKS:
             print(f'Going from level {self.curr_lvl} to {self.curr_lvl + 1}')
             self.curr_lvl += 1
         return np.sum(results[:, 0]), np.sum(results[:, 0]) == num_trials

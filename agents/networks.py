@@ -77,8 +77,8 @@ class OAISinglePlayerFeatureExtractor(BaseFeaturesExtractor):
 
     def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = 256):
         super(OAISinglePlayerFeatureExtractor, self).__init__(observation_space, features_dim)
-        self.use_visual_obs = np.prod(observation_space['visual_obs'].shape) > 0
-        self.use_vector_obs = np.prod(observation_space['agent_obs'].shape) > 0
+        self.use_visual_obs = 'visual_obs' in observation_space.keys()
+        self.use_vector_obs = 'agent_obs' in observation_space.keys()
         self.use_subtask_obs = 'subtask' in observation_space.keys()
         input_dim = 0
         if self.use_visual_obs:

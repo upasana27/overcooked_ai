@@ -1,10 +1,10 @@
 from agent import OAIAgent, SB3Wrapper, OAITrainer
-from arguments import get_arguments
+from arguments import get_arguments, get_args_to_save, set_args_from_load
 from behavioral_cloning import BehaviouralCloningPolicy, BehaviouralCloningAgent, BehavioralCloningTrainer
 from overcooked_gym_env import OvercookedGymEnv
 from overcooked_subtask_gym_env import OvercookedSubtaskGymEnv
 from overcooked_manager_gym_env import OvercookedManagerGymEnv
-from rl_agents import TwoSingleAgentsTrainer, OneDoubleAgentTrainer, SingleAgentTrainer, SB3DoubleAgentWrapper
+from rl_agents import TwoSingleAgentsTrainer, OneDoubleAgentTrainer, SingleAgentTrainer, SB3DoubleAgentWrapper, SB3SingleAgentWrapper
 from subtasks import Subtasks, calculate_completed_subtask, get_doable_subtasks
 from state_encodings import ENCODING_SCHEMES
 
@@ -12,6 +12,7 @@ from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 from overcooked_ai_py.mdp.actions import Action
 
 import numpy as np
+from pathlib import Path
 import torch as th
 from torch.distributions.categorical import Categorical
 import torch.nn.functional as F
@@ -59,20 +60,18 @@ def is_held_obj(player, object):
 
 class MultiAgentSubtaskWorker(OAIAgent):
     def __init__(self, agents, p_idx, args):
-        super(OAIAgent, self).__init__('multi_agent_subtask_worker', p_idx, args)
+        super(MultiAgentSubtaskWorker, self).__init__('multi_agent_subtask_worker', p_idx, args)
         self.agents = agents
 
     def predict(self, obs: th.Tensor):
         assert 'subtask' in obs.keys()
-        subtask_one_hot = obs['subtask']
-        subtask_id = np.nonzero(subtask_one_hot)[0][0]
-        return self.agents[subtask_id].predict(obs)
+        agent_preds = [self.agents[st].predict(obs) for st in obs['subtask']]
+        actions, states = zip(*agent_preds)
+        return actions, states
 
     def get_distribution(self, obs: th.Tensor):
         assert 'subtask' in obs.keys()
-        subtask_one_hot = obs['subtask']
-        subtask_id = np.nonzero(subtask_one_hot)[0][0]
-        return self.agents[subtask_id].get_distribution(obs)
+        return self.agents[obs['subtask']].get_distribution(obs)
 
     def _get_constructor_parameters(self):
         return dict(name=self.name, p_idx=self.p_idx, args=self.args)
@@ -82,9 +81,9 @@ class MultiAgentSubtaskWorker(OAIAgent):
         agent_path = path + '_subtask_agents_dir'
         Path(agent_path).mkdir(parents=True, exist_ok=True)
 
-        save_dict = {'sb3_model_type': type(self.agent), 'agent_paths': [],
+        save_dict = {'sb3_model_type': type(self.agents[0]), 'agent_paths': [],
                      'const_args': self._get_constructor_parameters(), 'args': args}
-        for i, agent in enumerate(agents):
+        for i, agent in enumerate(self.agents):
             agent_path_i = agent_path + '/agent{i}'
             agent.save(path)
             save_dict['agent_paths'].append(agent_path_i)
@@ -109,11 +108,11 @@ class MultiAgentSubtaskWorker(OAIAgent):
         t_idx = (p_idx + 1) % 2
         if dataset_file is not None:
             bct = BehavioralCloningTrainer(dataset_file, args)
-            bct.train_agents(epochs=2)
+            bct.train_agents(epochs=50)
             tm = bct.get_agent(p_idx=t_idx)
         else:
             tsa = TwoSingleAgentsTrainer(args)
-            tsa.train_agents(epochs=1000)
+            tsa.train_agents(epochs=500)
             tm = tsa.get_agent(p_idx=t_idx)
 
         # TODO Train 12 individual agents, each for a respective subtask
@@ -124,34 +123,25 @@ class MultiAgentSubtaskWorker(OAIAgent):
             kwargs = {'single_subtask_id': i, 'shape_rewards': True, 'args': args}
             env = OvercookedSubtaskGymEnv(**p_kwargs, **kwargs)
             rl_sat = SingleAgentTrainer(tm, t_idx, args, env=env)
-            rl_sat.train_agents(epochs=2)
+            rl_sat.train_agents(epochs=1000, exp_name = args.exp_name + f'_subtask_{i}')
             agents.append(rl_sat.get_agent(p_idx))
-        path = self.args.base_dir / 'agent_models' / self.name / self.args.layout_name
+        model = cls(agents=agents, p_idx=p_idx, args=args)
+        path = args.base_dir / 'agent_models' / model.name / args.layout_name
         Path(path).mkdir(parents=True, exist_ok=True)
-        tag = self.args.exp_name
-        self.save(str(path / tag))
-        return cls(agents=agents, p_idx=p_idx, args=args), tm
+        tag = args.exp_name
+        model.save(str(path / tag))
+        return model, tm
 
 
-class Manager(OAIAgent):
-    def __init__(self, worker, p_idx, args):
-        super(Manager, self).__init__(f'base_manager', p_idx, args)
-        self.worker = worker
-        assert worker.p_idx == p_idx
-        self.set_player_idx(p_idx)
-        self.trajectory = []
-        self.terrain = OvercookedGridworld.from_layout_name(args.layout_name).terrain_mtx
-        # for i in range(len(self.terrain)):
-        #     self.terrain[i] = ''.join(self.terrain[i])
-        # self.terrain = str(self.terrain)
-        self.worker_subtask_counts = np.zeros((2, Subtasks.NUM_SUBTASKS))
-        self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
-        self.subtask_selection = args.subtask_selection
-        self.reset(None)
-
+# Mix-in class
+class Manager:
     def select_next_subtask(self, curr_state):
         ''' Given the current state, select the next subtask to perform'''
         pass
+
+    def get_distribution(self, obs, sample=True):
+        obs['subtask'] = self.curr_subtask_id
+        return self.worker.get_distribution(obs)
 
     def predict(self, obs, sample=True):
         obs['subtask'] = self.curr_subtask_id
@@ -183,18 +173,18 @@ class Manager(OAIAgent):
         # Pick first subtask
         self.select_next_subtask(self.curr_state)
 
-class RLManagerWrapper(SB3Wrapper, Manager):
+class RLManagerWrapper(SB3SingleAgentWrapper, Manager):
     '''
     A wrapper for a stable baselines 3 agents that controls which subtask a worker should perform.
     NOTE: When using the class loading method, it requires an additional kwarg of the worker (e.g. worker=bc_agent)
     '''
-    def __init__(self, agent, worker, p_idx, args):
+    def __init__(self, manager, worker, p_idx, args):
         # This will call SB3Wrapper init due to MRO. SB3Wrapper expects the agent passed in is the agent to save
         # There is no need to call the Manager init, since all that code is to set up trajectory collection
-        super(RLManagerWrapper, self).__init__(manager, p_idx, args)
-        self.name = 'rl_manager'
-        self.manager = agent
+        super(RLManagerWrapper, self).__init__(manager, 'rl_manager', p_idx, args)
+        self.manager = manager
         self.worker = worker
+        assert worker.p_idx == p_idx
 
     def select_next_subtask(self, curr_state):
         obs = self.encoding_fn(curr_state)
@@ -240,9 +230,20 @@ class ValueBasedManager(Manager):
           complementary task cannot be completed if there is no object to pick up)
     :return:
     """
-    def __init__(self, agent, p_idx, args):
-        super(ValueBasedManager, self).__init__(agent, p_idx, args)
-        self.name = 'value_based_subtask_adaptor'
+    def __init__(self, worker, p_idx, args):
+        super(ValueBasedManager, self).__init__(worker,'value_based_subtask_adaptor', p_idx, args)
+        self.worker = worker
+        assert worker.p_idx == p_idx
+        self.trajectory = []
+        self.terrain = OvercookedGridworld.from_layout_name(args.layout_name).terrain_mtx
+        # for i in range(len(self.terrain)):
+        #     self.terrain[i] = ''.join(self.terrain[i])
+        # self.terrain = str(self.terrain)
+        self.worker_subtask_counts = np.zeros((2, Subtasks.NUM_SUBTASKS))
+        self.subtask_selection = args.subtask_selection
+        self.reset(None)
+        
+
         self.init_subtask_values()
 
     def init_subtask_values(self):
@@ -413,6 +414,7 @@ if __name__ == '__main__':
     # tsat.train_agents(epochs=2)
     # teammate = tsat.get_agent(t_idx)
     rlmt = RLManagerTrainer(worker, teammate, t_idx, args)
-    rlmt.train_agents(epochs=250)
+    rlmt.train_agents(epochs=250, exp_name=args.exp_name + '_manager')
+    print('done')
 
 

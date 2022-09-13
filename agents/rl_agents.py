@@ -92,9 +92,9 @@ class SingleAgentTrainer(OAITrainer):
                 if score > best_score:
                     best_path, best_tag = self.save()
                     best_score = score
-                if len(scores) > 5 and score <= np.mean(scores[-4:-1]): # no improvement
+                if score > 24: #len(scores) > 6 and np.mean(scores[-3:]) <= np.mean(scores[-6:-3]): # no improvement
                     break
-            self.agents[self.p_idx].learn(total_timesteps=10000)
+            self.agents[self.p_idx].learn(total_timesteps=1000)
         if best_path is not None:
             self.load(best_path, best_tag)
         run.finish()

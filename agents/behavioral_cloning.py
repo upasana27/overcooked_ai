@@ -38,7 +38,6 @@ class BehaviouralCloningPolicy(nn.Module):
         # NOTE The policy only uses subtasks as an input. Policies only output actions
         self.use_subtasks = args.use_subtasks
         self.use_visual_obs = np.prod(visual_obs_shape) > 0
-        assert len(agent_obs_shape) == 1
         self.use_agent_obs = np.prod(agent_obs_shape) > 0
         self.subtasks_obs_size = Subtasks.NUM_SUBTASKS if self.use_subtasks else 0
 
