@@ -68,6 +68,7 @@ class OAIAgent(nn.Module, ABC):
         device = args.device
         saved_variables = th.load(path, map_location=device)
         set_args_from_load(saved_variables['args'], args)
+        saved_variables['const_args']['args'] = args
         # Create agent object
         model = cls(**saved_variables['const_args'])  # pytype: disable=not-instantiable
         # Load weights
@@ -90,9 +91,9 @@ class SB3Wrapper(OAIAgent):
         Save model to a given location.
         :param path:
         """
-        arg_dict = get_args_to_save(self.args)
+        args = get_args_to_save(self.args)
         th.save({'sb3_model_type': type(self.agent),
-                 'const_data': self._get_constructor_parameters(), 'args': arg_dict}, str(path) + '_non_sb3_data')
+                 'const_data': self._get_constructor_parameters(), 'args': args}, str(path) + '_non_sb3_data')
         self.agent.save(path)
 
     @classmethod
@@ -106,6 +107,7 @@ class SB3Wrapper(OAIAgent):
         device = args.device
         saved_variables = th.load(str(path) + '_non_sb3_data')
         set_args_from_load(saved_variables['args'], args)
+        saved_variables['const_data']['args'] = args
         # TODO set args from loaded args
         # Create agent object
         agent = saved_variables['sb3_model_type'].load(path)

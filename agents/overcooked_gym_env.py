@@ -16,32 +16,17 @@ import torch as th
 class OvercookedGymEnv(Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, randomize_start=True,
-                 horizon=None, args=None):
+    def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, base_env=None, horizon=None, args=None):
         self.args = args
         self.device = args.device
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.agents = [p1, p2]
-        self.mdp = OvercookedGridworld.from_layout_name(args.layout_name)
-        ss_fn = None # Defaults to standard start fn
-        if randomize_start:
-            from overcooked_ai_py.planning.planners import MediumLevelActionManager
-            all_counters = self.mdp.get_counter_locations()
-            COUNTERS_PARAMS = {
-                'start_orientations': False,
-                'wait_allowed': False,
-                'counter_goals': all_counters,
-                'counter_drop': all_counters,
-                'counter_pickup': all_counters,
-                'same_motion_goals': True
-            }
-            self.mlam = MediumLevelActionManager.from_pickle_or_compute(self.mdp, COUNTERS_PARAMS, force_compute=False)
-            ss_fn = self.mdp.get_fully_random_start_state_fn(self.mlam,
-                                                             random_start_pos=True,
-                                                             random_orientation=True,
-                                                             rnd_obj_prob_thresh=0.5)
-        horizon = horizon or args.horizon
-        self.env = OvercookedEnv.from_mdp(self.mdp, horizon=horizon, start_state_fn=ss_fn)
+        if base_env is None:
+            self.mdp = OvercookedGridworld.from_layout_name(args.layout_name)
+            horizon = horizon or args.horizon
+            self.env = OvercookedEnv.from_mdp(self.mdp, horizon=horizon)
+        else:
+            self.env = base_env
         self.visualization_enabled = False
         self.grid_shape = grid_shape or self.env.mdp.shape
         self.shape_rewards = shape_rewards

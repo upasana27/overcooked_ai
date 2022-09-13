@@ -74,7 +74,7 @@ class MultiAgentSubtaskWorker(OAIAgent):
         return self.agents[obs['subtask']].get_distribution(obs)
 
     def _get_constructor_parameters(self):
-        return dict(name=self.name, p_idx=self.p_idx, args=self.args)
+        return dict(name=self.name, p_idx=self.p_idx)
 
     def save(self, path: str) -> None:
         args = get_args_to_save(self.args)
@@ -84,8 +84,8 @@ class MultiAgentSubtaskWorker(OAIAgent):
         save_dict = {'sb3_model_type': type(self.agents[0]), 'agent_paths': [],
                      'const_args': self._get_constructor_parameters(), 'args': args}
         for i, agent in enumerate(self.agents):
-            agent_path_i = agent_path + '/agent{i}'
-            agent.save(path)
+            agent_path_i = agent_path + '/subtask_{i}_agent'
+            agent.save(agent_path_i)
             save_dict['agent_paths'].append(agent_path_i)
         th.save(save_dict, path)
 
@@ -94,6 +94,7 @@ class MultiAgentSubtaskWorker(OAIAgent):
         device = args.device
         saved_variables = th.load(path, map_location=device)
         set_args_from_load(saved_variables['args'], args)
+        saved_variables['const_data']['args'] = args
 
         # Load weights
         agents = []

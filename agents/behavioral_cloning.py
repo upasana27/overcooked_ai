@@ -101,7 +101,6 @@ class BehaviouralCloningAgent(OAIAgent):
             visual_obs_shape=self.visual_obs_shape,
             agent_obs_shape=self.agent_obs_shape,
             p_idx=self.p_idx,
-            args = self.args,
             hidden_dim = self.hidden_dim
         )
 

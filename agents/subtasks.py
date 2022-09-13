@@ -134,7 +134,8 @@ def get_doable_subtasks(state, terrain, p_idx):
         subtask_mask[Subtasks.SUBTASKS_TO_IDS['put_plate_closer']] = 1
         # Can only grab the soup using the plate if a soup is currently cooking
         for obj in state.objects.values():
-            if obj.name == 'soup' and not obj.is_idle:
+            x, y = obj.position
+            if obj.name == 'soup' and terrain[y][x] == 'P' and not obj.is_idle:
                 subtask_mask[Subtasks.SUBTASKS_TO_IDS['get_soup']] = 1
     # The player is holding a soup, so it can only accomplish tasks that involve putting the soup somewhere
     elif state.players[p_idx].held_object.name == 'soup':

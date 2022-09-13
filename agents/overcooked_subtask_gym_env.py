@@ -1,4 +1,7 @@
 from agent import OAIAgent
+from overcooked_ai_py.planning.planners import MediumLevelActionManager
+from overcooked_ai_py.mdp.overcooked_mdp import OvercookedState, OvercookedGridworld, Direction, Action
+from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
 from overcooked_gym_env import OvercookedGymEnv
 from subtasks import Subtasks, get_doable_subtasks, calculate_completed_subtask
 
@@ -20,7 +23,21 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
             self.single_subtask, self.single_subtask_id = Subtasks.IDS_TO_SUBTASKS[single_subtask_id], single_subtask_id
         elif self.use_curriculum:
             self.curr_lvl = 0
-        super(OvercookedSubtaskGymEnv, self).__init__(p1, p2, grid_shape, shape_rewards, randomize_start, 100, args)
+
+        self.mdp = OvercookedGridworld.from_layout_name(args.layout_name)
+        all_counters = self.mdp.get_counter_locations()
+        COUNTERS_PARAMS = {
+            'start_orientations': False,
+            'wait_allowed': False,
+            'counter_goals': all_counters,
+            'counter_drop': all_counters,
+            'counter_pickup': all_counters,
+            'same_motion_goals': True
+        }
+        self.mlam = MediumLevelActionManager.from_pickle_or_compute(self.mdp, COUNTERS_PARAMS, force_compute=False)
+        ss_fn = self.mdp.get_subtask_start_state_fn(self.mlam, random_start_pos=True, random_orientation=True)
+        env = OvercookedEnv.from_mdp(self.mdp, horizon=100, start_state_fn=ss_fn)
+        super(OvercookedSubtaskGymEnv, self).__init__(p1, p2, grid_shape, shape_rewards, base_env=env, args=args)
         assert any(self.agents) and self.p_idx is not None
         self.obs_dict['subtask'] =  spaces.Box(0, 1, (1,), dtype=np.int32)
         self.observation_space = spaces.Dict(self.obs_dict)
@@ -86,30 +103,25 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         return self.get_obs(self.p_idx), reward, done, info
 
     def reset(self, evaluate=False):
-        acceptable_subtask = False
-        while not acceptable_subtask:
-            self.env.reset()
-            self.state = self.env.state
-            subtask_mask = get_doable_subtasks(self.state, self.mdp.terrain_mtx, self.p_idx)
-            if self.single_subtask:
-                acceptable_subtask = subtask_mask[self.single_subtask_id] == 1 or self.single_subtask_id == Subtasks.SUBTASKS_TO_IDS['unknown']
-            elif self.use_curriculum:
-                acceptable_subtask = np.nonzero(subtask_mask)[0][0] <= self.curr_lvl
-            else:
-                acceptable_subtask = True
-
         if self.use_single_subtask:
             self.goal_subtask = self.single_subtask
         else:
+            subtask_probs = np.ones(Subtasks.NUM_SUBTASKS)
+            subtask_probs[-1] = 0
             if self.use_curriculum:
                 # nothing past curr level can be selected
-                subtask_mask[self.curr_lvl + 1:] = 0
+                subtask_probs[self.curr_lvl + 1:] = 0
             subtask_probs = subtask_mask / np.sum(subtask_mask)
             self.goal_subtask = np.random.choice(Subtasks.SUBTASKS, p=subtask_probs)
         self.goal_subtask_id = Subtasks.SUBTASKS_TO_IDS[self.goal_subtask]
+        self.env.reset(start_state_kwargs={'p_idx': self.p_idx, 'subtask': self.goal_subtask})
+        self.state = self.env.state
+        assert get_doable_subtasks(self.state, self.mdp.terrain_mtx, self.p_idx)[self.goal_subtask_id]
+
         for i in range(2):
             if isinstance(self.agents[i], OAIAgent):
                 self.agents[i].reset(self.state)
+        # print(self.goal_subtask)
         return self.get_obs(self.p_idx)
 
     def evaluate(self, main_agent=None, num_trials=25, other_agent=None):

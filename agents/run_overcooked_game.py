@@ -18,6 +18,7 @@ from behavioral_cloning import BehaviouralCloningAgent
 from hrl_agents import Manager
 from arguments import get_arguments
 from overcooked_gym_env import OvercookedGymEnv
+from overcooked_subtask_gym_env import OvercookedSubtaskGymEnv
 from state_encodings import ENCODING_SCHEMES
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld, Direction, Action, OvercookedState
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
@@ -85,7 +86,19 @@ class App:
         self._display_surf = None
         self.args = args
         self.layout_name = args.layout_name
-        self.env = OvercookedGymEnv(args=args)
+
+        self.use_subtask_env = True
+        if self.use_subtask_env:
+            self.p_idx = 0
+            self.t_idx = (self.p_idx + 1) % 2
+            tm = BehaviouralCloningAgent.load('/home/miguel/Documents/projects/overcooked_ai/agent_models/bc/counter_circuit_o_1order/st3_p2', args)
+            p_kwargs = {'p1': tm} if self.t_idx == 0 else {'p2': tm}
+            kwargs = {'single_subtask_id': 10, 'shape_rewards': True, 'args': args}
+            self.env = OvercookedSubtaskGymEnv(**p_kwargs, **kwargs)
+            agents = ['human', tm]
+        else:
+            self.env = OvercookedGymEnv(args=args)
+
         self.grid_shape = self.env.grid_shape
         if traj_file is not None:
             self.mode = 'replay'
@@ -149,7 +162,11 @@ class App:
 
     def step_env(self, joint_action):
         prev_state = self.env.state
-        obs, reward, done, info = self.env.step(joint_action)
+
+        if self.use_subtask_env:
+            obs, reward, done, info = self.env.step(joint_action[self.p_idx])
+        else:
+            obs, reward, done, info = self.env.step(joint_action)
         new_state = self.env.state
         for i in range(2):
             if isinstance(self.agents[i], OAIAgent):
@@ -242,7 +259,7 @@ class App:
         sleep_time = 1000 // self.fps
         for i in range(2):
             if isinstance(self.agents[i], OAIAgent):
-                self.agents[i].reset(self.env.state, i)
+                self.agents[i].reset(self.env.state)
         while (self._running):
             self.joint_action = [None, None]
             for i in range(2):
