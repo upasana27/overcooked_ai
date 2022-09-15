@@ -84,7 +84,7 @@ class MultiAgentSubtaskWorker(OAIAgent):
         save_dict = {'sb3_model_type': type(self.agents[0]), 'agent_paths': [],
                      'const_args': self._get_constructor_parameters(), 'args': args}
         for i, agent in enumerate(self.agents):
-            agent_path_i = agent_path + '/subtask_{i}_agent'
+            agent_path_i = agent_path + f'/subtask_{i}_agent'
             agent.save(agent_path_i)
             save_dict['agent_paths'].append(agent_path_i)
         th.save(save_dict, path)
@@ -124,7 +124,8 @@ class MultiAgentSubtaskWorker(OAIAgent):
             kwargs = {'single_subtask_id': i, 'shape_rewards': True, 'args': args}
             env = OvercookedSubtaskGymEnv(**p_kwargs, **kwargs)
             rl_sat = SingleAgentTrainer(tm, t_idx, args, env=env)
-            rl_sat.train_agents(epochs=1000, exp_name = args.exp_name + f'_subtask_{i}')
+            if i != Subtasks.SUBTASKS_TO_IDS['unknown']:
+                rl_sat.train_agents(epochs=1000, exp_name = args.exp_name + f'_subtask_{i}')
             agents.append(rl_sat.get_agent(p_idx))
         model = cls(agents=agents, p_idx=p_idx, args=args)
         path = args.base_dir / 'agent_models' / model.name / args.layout_name
@@ -163,8 +164,8 @@ class Manager:
                 self.select_next_subtask(self.curr_state)
 
         self.trajectory.append(joint_action)
-        if self.subtask_selection == 'value_based':
-            self.update_subtask_values(self.curr_state, new_state)
+        #if self.subtask_selection == 'value_based':
+        #    self.update_subtask_values(self.curr_state, new_state)
         self.curr_state = new_state
 
     def reset(self, state):
@@ -198,10 +199,44 @@ class RLManagerWrapper(SB3SingleAgentWrapper, Manager):
     def reset(self, state):
         pass
 
+    def save(self, path: str) -> None:
+        """
+        Save model to a given location.
+        :param path:
+        """
+        worker_save_path = str(path) + '_worker'
+        self.worker.save(worker_save_path)
+        args = get_args_to_save(self.args)
+        th.save({'state_dict': self.state_dict(), 'worker_type': type(self.worker), 'worker_path': worker_save_path,
+                 'sb3_model_type': type(self.manager), 'const_args': self._get_constructor_parameters(), 'args': args},
+                str(path) + '_non_sb3_data')
+        self.manager.save(path)
+
+    @classmethod
+    def load(cls, path: str, args) -> 'OAIAgent':
+        """
+        Load model from path.
+        :param path: path to save to
+        :param device: Device on which the policy should be loaded.
+        :return:
+        """
+        device = args.device
+        saved_variables = th.load(str(path)  + '_non_sb3_data', map_location=device)
+        set_args_from_load(saved_variables['args'], args)
+        worker = saved_variables['worker_type'].load(saved_variables['worker_path'], args)
+        manager = saved_variables['sb3_model_type'].load(path)
+        saved_variables['const_args']['args'] = args
+
+        # Create agent object
+        model = cls( manager=manager, worker=worker, **saved_variables['const_args'])  # pytype: disable=not-instantiable
+        model.to(device)
+        model.reset(None)
+        return model
+
 class RLManagerTrainer(SingleAgentTrainer):
     ''' Train an RL agent to play with a provided agent '''
     def __init__(self, worker, teammate, teammate_idx, args):
-        env = OvercookedManagerGymEnv(worker=worker, teammate=teammate, shape_rewards=True, randomize_start=False, args=args)
+        env = OvercookedManagerGymEnv(worker=worker, teammate=teammate, shape_rewards=True, args=args)
         self.worker = worker
         super(RLManagerTrainer, self).__init__(teammate, teammate_idx, args, env=env)
         assert worker.p_idx == self.p_idx and teammate.p_idx == self.t_idx

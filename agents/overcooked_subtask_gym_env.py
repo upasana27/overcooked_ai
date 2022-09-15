@@ -116,7 +116,8 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         self.goal_subtask_id = Subtasks.SUBTASKS_TO_IDS[self.goal_subtask]
         self.env.reset(start_state_kwargs={'p_idx': self.p_idx, 'subtask': self.goal_subtask})
         self.state = self.env.state
-        assert get_doable_subtasks(self.state, self.mdp.terrain_mtx, self.p_idx)[self.goal_subtask_id]
+        if self.goal_subtask != 'unknown':
+            assert get_doable_subtasks(self.state, self.mdp.terrain_mtx, self.p_idx)[self.goal_subtask_id]
 
         for i in range(2):
             if isinstance(self.agents[i], OAIAgent):

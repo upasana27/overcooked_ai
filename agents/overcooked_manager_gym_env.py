@@ -12,12 +12,12 @@ import torch.nn.functional as F
 
 
 class OvercookedManagerGymEnv(OvercookedGymEnv):
-    def __init__(self, worker=None, teammate=None, grid_shape=None, shape_rewards=False, randomize_start=False, args=None):
+    def __init__(self, worker=None, teammate=None, grid_shape=None, shape_rewards=False, args=None):
         assert worker.p_idx != teammate.p_idx
         self.worker = worker
         self.worker_idx = worker.p_idx
         p1, p2 = (None, teammate) if worker.p_idx == 0 else (teammate, None)
-        super(OvercookedManagerGymEnv, self).__init__(p1=p1, p2=p2, grid_shape=grid_shape, shape_rewards=shape_rewards, randomize_start=randomize_start, args=args)
+        super(OvercookedManagerGymEnv, self).__init__(p1=p1, p2=p2, grid_shape=grid_shape, shape_rewards=shape_rewards, args=args)
         assert any(self.agents) and self.p_idx is not None
         self.action_space = spaces.Discrete(Subtasks.NUM_SUBTASKS)
 
