@@ -187,7 +187,7 @@ class RLManagerWrapper(SB3SingleAgentWrapper, Manager):
         self.worker.save(worker_save_path)
         args = get_args_to_save(self.args)
         th.save({'state_dict': self.state_dict(), 'worker_type': type(self.worker), 'worker_path': worker_save_path,
-                 'sb3_model_type': type(self.manager), 'const_args': self._get_constructor_parameters(), 'args': args},
+                 'sb3_model_type': type(self.manager), 'const_params': self._get_constructor_parameters(), 'args': args},
                 str(path) + '_non_sb3_data')
         self.manager.save(path)
 
@@ -204,10 +204,10 @@ class RLManagerWrapper(SB3SingleAgentWrapper, Manager):
         set_args_from_load(saved_variables['args'], args)
         worker = saved_variables['worker_type'].load(saved_variables['worker_path'], args)
         manager = saved_variables['sb3_model_type'].load(path)
-        saved_variables['const_args']['args'] = args
+        saved_variables['const_params']['args'] = args
 
         # Create agent object
-        model = cls( manager=manager, worker=worker, **saved_variables['const_args'])  # pytype: disable=not-instantiable
+        model = cls( manager=manager, worker=worker, **saved_variables['const_params'])  # pytype: disable=not-instantiable
         model.to(device)
         model.reset(None)
         return model

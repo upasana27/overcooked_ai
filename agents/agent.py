@@ -55,7 +55,7 @@ class OAIAgent(nn.Module, ABC):
         :param path:
         """
         args = get_args_to_save(self.args)
-        th.save({'state_dict': self.state_dict(), 'const_args': self._get_constructor_parameters(), 'args': args}, path)
+        th.save({'state_dict': self.state_dict(), 'const_params': self._get_constructor_parameters(), 'args': args}, path)
 
     @classmethod
     def load(cls, path: str, args: argparse.Namespace) -> 'OAIAgent':
@@ -68,9 +68,9 @@ class OAIAgent(nn.Module, ABC):
         device = args.device
         saved_variables = th.load(path, map_location=device)
         set_args_from_load(saved_variables['args'], args)
-        saved_variables['const_args']['args'] = args
+        saved_variables['const_params']['args'] = args
         # Create agent object
-        model = cls(**saved_variables['const_args'])  # pytype: disable=not-instantiable
+        model = cls(**saved_variables['const_params'])  # pytype: disable=not-instantiable
         # Load weights
         model.load_state_dict(saved_variables['state_dict'])
         model.to(device)
