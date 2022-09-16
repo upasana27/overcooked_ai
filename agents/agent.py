@@ -83,7 +83,7 @@ class SB3Wrapper(OAIAgent):
         self.policy = self.agent.policy
 
     def learn(self, total_timesteps):
-        self.agent.learn(total_timesteps=total_timesteps)
+        self.agent.learn(total_timesteps=total_timesteps, reset_num_timesteps=False)
 
     def save(self, path: str) -> None:
         """
@@ -119,18 +119,20 @@ class OAITrainer(ABC):
     An abstract base class for trainer classes.
     Trainer classes must have two agents that they can train using some paradigm
     """
-    def __init__(self, name, args):
+    def __init__(self, name, args, seed=None):
         super(OAITrainer, self).__init__()
         self.name = name
         self.args = args
+        self.ck_list = []
+        if seed is not None:
+            th.manual_seed(seed)
 
-    @abstractmethod
-    def get_agent(self, idx: int) -> OAIAgent:
+    def get_agent(self, p_idx: int) -> OAIAgent:
         """
-        Given an observation return the index of the action and the agent state if the agent is recurrent.
         Structure should be the same as agents created using stable baselines:
         https://stable-baselines3.readthedocs.io/en/master/modules/base.html#stable_baselines3.common.base_class.BaseAlgorithm.predict
         """
+        return self.agents[p_idx]
 
     def save(self, path: Union[str, None] = None, tag: Union[str, None] = None):
         ''' Saves each agent that the trainer is training '''
@@ -143,7 +145,7 @@ class OAITrainer(ABC):
 
     def load(self, path: Union[str, None]=None, tag: Union[str, None]=None):
         ''' Loads each agent that the trainer is training '''
-        path = path or self.args.base_dir / 'agent_models' / 'IL_agents' / self.args.layout_name
+        path = path or self.args.base_dir / 'agent_models' / self.name / self.args.layout_name
         tag = tag or self.args.exp_name
         for i in range(2):
             self.agents[i] = self.agents[i].load(path / (tag + f'_p{i + 1}'), self.args)

@@ -31,22 +31,22 @@ class TypeBasedAdaptor(OAIAgent):
 
         # RL two single agents
         rl_tsat = TwoSingleAgentsTrainer(args)
-        rl_tsat.train_agents(epochs=rl_epochs)
+        rl_tsat.train_agents(total_timesteps=rl_steps)
         p1_agents.append(rl_tsat.get_agent(idx=0))
         p2_agents.append(rl_tsat.get_agent(idx=1))
 
         # RL double agent
         rl_odat = OneDoubleAgentTrainer(args)
-        rl_odat.train_agents(epochs=rl_epochs)
+        rl_odat.train_agents(total_timesteps=rl_steps)
         p1_agents.append(rl_odat.get_agent(idx=0))
         p2_agents.append(rl_odat.get_agent(idx=1))
 
         # RL single agents trained with BC partner
         rl_sat = SingleAgentTrainer(bc_p2, 1, args)
-        rl_sat.train_agents(epochs=rl_epochs)
+        rl_sat.train_agents(total_timesteps=rl_steps)
         p1_agents.append(rl_sat.get_agent(idx=0))
         rl_sat = SingleAgentTrainer(bc_p1, 0, args)
-        rl_sat.train_agents(epochs=rl_epochs)
+        rl_sat.train_agents(total_timesteps=rl_steps)
         p2_agents.append(rl_sat.get_agent(idx=1))
 
         # TODO deal with different layouts logic
