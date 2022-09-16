@@ -19,35 +19,6 @@ import torch.nn.functional as F
 from typing import Tuple, Union
 
 
-def create_rl_worker(dataset_file, p_idx, args):
-    t_idx = (p_idx + 1) % 2
-    bct = BehavioralCloningTrainer(dataset_file, args)
-    # bct.train_agents(epochs=1)
-    tm = bct.get_agent(idx=t_idx)
-
-    # tsat = TwoSingleAgentsTrainer(args)
-    # tsat.train_agents(epochs=2)
-    # tm = tsat.get_agent(p_idx)
-    # TODO Train 12 individual agents, each for a respective subtask
-
-    # RL single subtask agents trained with BC partner
-    p_kwargs = {'p1': tm} if t_idx == 0 else {'p2': tm}
-    kwargs = {'shape_rewards': True, 'args': args}
-    env = OvercookedSubtaskGymEnv(**p_kwargs, **kwargs)
-    rl_sat = SingleAgentTrainer(tm, t_idx, args, env=env)
-    rl_sat.train_agents(epochs=2000)
-    worker = rl_sat.get_agent(p_idx)
-    return worker
-
-
-def create_bc_worker(dataset_file, p_idx, args):
-    args.use_subtasks = True
-    bct = BehavioralCloningTrainer(dataset_file, args)
-    bct.train_agents(epochs=1000)
-    worker = bct.get_agent(idx=p_idx)
-    return worker
-
-
 # TODO Move to util
 def is_held_obj(player, object):
     '''Returns True if the object that the "player" picked up / put down is the same as the "object"'''
@@ -82,10 +53,11 @@ class MultiAgentSubtaskWorker(OAIAgent):
         Path(agent_path).mkdir(parents=True, exist_ok=True)
 
         save_dict = {'sb3_model_type': type(self.agents[0]), 'agent_paths': [],
-                     'const_args': self._get_constructor_parameters(), 'args': args}
+                     'const_params': self._get_constructor_parameters(), 'args': args}
         for i, agent in enumerate(self.agents):
             agent_path_i = agent_path + f'/subtask_{i}_agent'
             agent.save(agent_path_i)
+
             save_dict['agent_paths'].append(agent_path_i)
         th.save(save_dict, path)
 
@@ -102,7 +74,7 @@ class MultiAgentSubtaskWorker(OAIAgent):
             agent = saved_variables['sb3_model_type'].load(agent_path)
             agent.to(device)
             agents.append(agent)
-        return cls(agents=agents, **saved_variables['const_data'], **kwargs)
+        return cls(agents=agents, **saved_variables['const_params'], **kwargs)
 
     @classmethod
     def create_model_from_scratch(cls, p_idx, args, dataset_file=None) -> 'OAIAgent':
@@ -113,19 +85,20 @@ class MultiAgentSubtaskWorker(OAIAgent):
             tm = bct.get_agent(p_idx=t_idx)
         else:
             tsa = TwoSingleAgentsTrainer(args)
-            tsa.train_agents(epochs=500)
+            tsa.train_agents(total_timesteps=1e8)
             tm = tsa.get_agent(p_idx=t_idx)
 
-        # TODO Train 12 individual agents, each for a respective subtask
+        # Train 12 individual agents, each for a respective subtask
         agents = []
         for i in range(Subtasks.NUM_SUBTASKS):
             # RL single subtask agents trained with BC partner
             p_kwargs = {'p1': tm} if t_idx == 0 else {'p2': tm}
             kwargs = {'single_subtask_id': i, 'shape_rewards': True, 'args': args}
-            env = OvercookedSubtaskGymEnv(**p_kwargs, **kwargs)
-            rl_sat = SingleAgentTrainer(tm, t_idx, args, env=env)
+            env = make_vec_env(OvercookedGymEnv, n_envs=args.n_envs, env_kwargs={**p_kwargs, **env_kwargs})
+            eval_env = OvercookedSubtaskGymEnv(**p_kwargs, **kwargs)
+            rl_sat = SingleAgentTrainer(tm, t_idx, args, env=env, eval_env=eval_env)
             if i != Subtasks.SUBTASKS_TO_IDS['unknown']:
-                rl_sat.train_agents(epochs=1000, exp_name = args.exp_name + f'_subtask_{i}')
+                rl_sat.train_agents(total_timesteps=1e4, exp_name=args.exp_name + f'_subtask_{i}')
             agents.append(rl_sat.get_agent(p_idx))
         model = cls(agents=agents, p_idx=p_idx, args=args)
         path = args.base_dir / 'agent_models' / model.name / args.layout_name
@@ -150,6 +123,11 @@ class Manager:
         action_logits = self.worker.forward(obs)
         action = Categorical(logits=action_logits).sample() if sample else th.argmax(action_logits, dim=-1)
         return action
+
+    def get_distribution(self, obs, sample=True):
+        obs['subtask'] = self.curr_subtask_id
+        return self.worker.forward(obs)
+
 
     def step(self, new_state, joint_action):
         if self.p_idx is None:
@@ -236,9 +214,11 @@ class RLManagerWrapper(SB3SingleAgentWrapper, Manager):
 class RLManagerTrainer(SingleAgentTrainer):
     ''' Train an RL agent to play with a provided agent '''
     def __init__(self, worker, teammate, teammate_idx, args):
-        env = OvercookedManagerGymEnv(worker=worker, teammate=teammate, shape_rewards=True, args=args)
+        kwargs = {'worker': worker, 'teammate': teammate, 'shape_rewards': True, 'args': args}
+        env = make_vec_env(OvercookedGymEnv, n_envs=args.n_envs, env_kwargs={**kwargs})
+        eval_env = OvercookedManagerGymEnv(**kwargs)
         self.worker = worker
-        super(RLManagerTrainer, self).__init__(teammate, teammate_idx, args, env=env)
+        super(RLManagerTrainer, self).__init__(teammate, teammate_idx, args, env=env, eval_env=eval_env)
         assert worker.p_idx == self.p_idx and teammate.p_idx == self.t_idx
 
     def wrap_agent(self, rl_agent):
@@ -447,10 +427,10 @@ if __name__ == '__main__':
 
     #create_rl_worker(args.dataset, p_idx, args)
     # tsat = TwoSingleAgentsTrainer(args)
-    # tsat.train_agents(epochs=2)
+    # tsat.train_agents(total_timesteps=1e6)
     # teammate = tsat.get_agent(t_idx)
     rlmt = RLManagerTrainer(worker, teammate, t_idx, args)
-    rlmt.train_agents(epochs=250, exp_name=args.exp_name + '_manager')
-    print('done')
+    rlmt.train_agents(total_timesteps=1e8, exp_name=args.exp_name + '_manager')
+print('done')
 
 

@@ -55,8 +55,8 @@ class OvercookedGymEnv(Env):
             self.action_space = spaces.MultiDiscrete([ len(Action.ALL_ACTIONS), len(Action.ALL_ACTIONS) ])
         
 
-    def set_agent(self, agent, idx):
-        self.agents[idx] = agent
+    def set_agent(self, agent, p_idx):
+        self.agents[p_idx] = agent
 
     def setup_visualization(self):
         self.visualization_enabled = True

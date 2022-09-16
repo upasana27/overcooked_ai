@@ -5,8 +5,10 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 def get_output_shape(model, image_dim):
     return model(th.rand(*(image_dim))).data.shape[1:]
+
 
 def weights_init_(m):
     if hasattr(m, 'weight') and m.weight is not None and len(m.weight.shape) > 2:
@@ -36,6 +38,7 @@ class GridEncoder(nn.Module):
     def forward(self, obs):
         return self.encoder(obs.float())
 
+
 class MLP(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim=256, num_layers=2, act=nn.ReLU):
         super(MLP, self).__init__()
@@ -51,22 +54,6 @@ class MLP(nn.Module):
 
     def forward(self, obs):
         return self.mlp(obs)
-
-
-# LSTM TASK
-class OAISinglePlayerLSTMFeatureExtractor(BaseFeaturesExtractor):
-    """
-        :param observation_space: (gym.Space)
-        :param features_dim: (int) Number of features extracted.
-            This corresponds to the number of unit for the last layer.
-        """
-
-    def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = 256):
-        pass
-
-    def forward(self, observations: th.Tensor) -> th.Tensor:
-        pass
-
 
 class OAISinglePlayerFeatureExtractor(BaseFeaturesExtractor):
     """
@@ -114,6 +101,7 @@ class OAIDoublePlayerFeatureExtractor(BaseFeaturesExtractor):
         :param features_dim: (int) Number of features extracted.
             This corresponds to the number of unit for the last layer.
         """
+
     def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = 256):
         super(OAIDoublePlayerFeatureExtractor, self).__init__(observation_space, features_dim)
         self.use_visual_obs = np.prod(observation_space['visual_obs'].shape) > 0
