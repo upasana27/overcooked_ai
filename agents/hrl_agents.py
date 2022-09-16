@@ -6,6 +6,7 @@ from overcooked_subtask_gym_env import OvercookedSubtaskGymEnv
 from overcooked_manager_gym_env import OvercookedManagerGymEnv
 from rl_agents import TwoSingleAgentsTrainer, OneDoubleAgentTrainer, SingleAgentTrainer, SB3DoubleAgentWrapper, SB3SingleAgentWrapper
 from subtasks import Subtasks, calculate_completed_subtask, get_doable_subtasks
+from stable_baselines3.common.env_util import make_vec_env
 from state_encodings import ENCODING_SCHEMES
 
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld

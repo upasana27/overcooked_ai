@@ -14,7 +14,7 @@ from overcooked_gym_env import OvercookedGymEnv
 from overcooked_subtask_gym_env import OvercookedSubtaskGymEnv
 from state_encodings import ENCODING_SCHEMES
 
-EPOCH_TIMESTEPS = 1000
+EPOCH_TIMESTEPS = 10000
 
 class SB3SingleAgentWrapper(SB3Wrapper):
     ''' A wrapper for a stable baselines 3 agents that controls a single player '''
@@ -117,7 +117,7 @@ class SingleAgentTrainer(OAITrainer):
                 if score > best_score:
                     best_path, best_tag = self.save()
                     best_score = score
-                if score > 24: #len(scores) > 6 and np.mean(scores[-3:]) <= np.mean(scores[-6:-3]): # no improvement
+                if done_training:# or len(scores) > 10 and np.mean(scores[-3:]) <= np.mean(scores[-6:-3]): # no improvement
                     break
 
             self.agents[self.p_idx].learn(total_timesteps=EPOCH_TIMESTEPS)
@@ -177,7 +177,7 @@ class TwoSingleAgentsTrainer(OAITrainer):
         best_score, scores = 0, []
         best_path, best_tag = None, None
         while self.agents[0].agent.num_timesteps < total_timesteps:
-            if epoch % 1 == 0:
+            if epoch % 10 == 0:
                 epoch += 1
                 score = self.eval_env.run_full_episode()
                 scores.append(score)
@@ -186,8 +186,6 @@ class TwoSingleAgentsTrainer(OAITrainer):
                 if score > best_score:
                     best_path, best_tag = self.save()
                     best_score = score
-                if len(scores) > 5 and score <= np.mean(scores[-4:-1]): # done training
-                    break
                 if self.fcp_ck_rate is not None and epoch % self.fcp_ck_rate == 0:
                     path, tag = self.save(tag=f'epoch_{epoch}')
                     self.ck_list.append( (score, path, tag) )
@@ -199,7 +197,6 @@ class TwoSingleAgentsTrainer(OAITrainer):
         run.finish()
 
     def get_fcp_agents(self):
-        print('?', len(self.ck_list))
         if len(self.ck_list) < 3:
             raise ValueError('Must have at least 3 checkpoints saved. Increase fcp_ck_rate or training length')
         p1_agents = []
@@ -272,8 +269,6 @@ class OneDoubleAgentTrainer(OAITrainer):
                 if score > best_score:
                     best_path, best_tag = self.save()
                     best_score = score
-                if len(scores) > 5 and score <= np.mean(scores[-4:-1]): # done training
-                    break
             self.agents[0].learn(total_timesteps=EPOCH_TIMESTEPS)
 
         if best_path is not None:
@@ -308,7 +303,7 @@ class Population:
 
         save_dict = {'model_type': type(self.agent[0]), 'p_idx': self.p_idx, 'agent_paths': [], 'args': args}
         for i, agent in enumerate(agents):
-            agent_path_i = agent_path + '/agent{i}'
+            agent_path_i = agent_path + f'/agent_{i}'
             agent.save(path)
             save_dict['agent_paths'].append(agent_path_i)
         th.save(save_dict, path)
@@ -353,15 +348,15 @@ class Population:
 
 if __name__ == '__main__':
     args = get_arguments()
-    # lstm = TwoSingleAgentsTrainer(args, use_lstm=True)
-    # lstm.train_agents(total_timesteps=1e3)
-    # tsa = TwoSingleAgentsTrainer(args)
-    # tsa.train_agents(total_timesteps=1e3)
-    # oda = OneDoubleAgentTrainer(args)
-    # oda.train_agents(total_timesteps=1e3)
-    p1, p2 = Population.create_fcp_population(args)
-    p1 = Poulation.load(str(self.args.base_dir / 'agent_models' / 'population' / self.args.layout_name / 'p1s'))
-    p2 = Poulation.load(str(self.args.base_dir / 'agent_models' / 'population' / self.args.layout_name / 'p2s'))
+    lstm = TwoSingleAgentsTrainer(args, use_lstm=True)
+    lstm.train_agents(total_timesteps=1e6)
+    tsa = TwoSingleAgentsTrainer(args)
+    tsa.train_agents(total_timesteps=1e6)
+    oda = OneDoubleAgentTrainer(args)
+    oda.train_agents(total_timesteps=1e6)
+    # p1, p2 = Population.create_fcp_population(args)
+    # p1 = Poulation.load(str(self.args.base_dir / 'agent_models' / 'population' / self.args.layout_name / 'p1s'))
+    # p2 = Poulation.load(str(self.args.base_dir / 'agent_models' / 'population' / self.args.layout_name / 'p2s'))
 
 
 
