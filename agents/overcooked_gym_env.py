@@ -93,7 +93,7 @@ class OvercookedGymEnv(Env):
         next_state, reward, done, info = self.env.step(joint_action)
         self.state = self.env.state
         if self.shape_rewards:
-            ratio = min(self.step_count / 2.5e6, 1)
+            ratio = min(self.step_count * self.args.n_envs / 2.5e6, 1)
             sparse_r = sum(info['sparse_r_by_agent'])
             shaped_r = info['shaped_r_by_agent'][self.p_idx] if self.p_idx else sum(info['shaped_r_by_agent'])
             reward = sparse_r * ratio + shaped_r * (1 - ratio)

@@ -113,7 +113,7 @@ class SingleAgentTrainer(OAITrainer):
                 score, done_training = self.eval_env.evaluate(self.agents[self.p_idx], num_trials=1)
                 scores.append(score)
                 print(f'Episode eval at epoch {epoch}: {score}')
-                wandb.log({'eval_true_score': score, 'epoch': epoch})
+                wandb.log({'eval_true_reward': score, 'epoch': epoch})
                 if score > best_score:
                     best_path, best_tag = self.save()
                     best_score = score
@@ -149,8 +149,10 @@ class TwoSingleAgentsTrainer(OAITrainer):
         )
 
         if use_lstm:
-            agents = [RecurrentPPO('MultiInputLstmPolicy', self.envs[0], policy_kwargs=policy_kwargs, verbose=1),
-                      RecurrentPPO('MultiInputLstmPolicy', self.envs[1], policy_kwargs=policy_kwargs, verbose=1)]
+            agents = [RecurrentPPO('MultiInputLstmPolicy', self.envs[0], policy_kwargs=policy_kwargs, verbose=1,
+                                   n_steps=2048, batch_size=64),
+                      RecurrentPPO('MultiInputLstmPolicy', self.envs[1], policy_kwargs=policy_kwargs, verbose=1,
+                                   n_steps=2048, batch_size=64)]
             self.agents = [SB3SingleAgentLSTMWrapper(agents[i], f'rl_two_single_lstm_agents_p{i + 1}', i, args) for i in
                            range(2)]
         else:
@@ -327,19 +329,18 @@ class Population:
         p1_agents = []
         p2_agents = []
         for use_lstm in [True, False]:
-            hidden_dim = 16
-            seed = 0
-            # for hidden_dim in [16, 256]:
+            # hidden_dim = 16
+            # seed = 0
+            for hidden_dim in [16, 256]:
             #     for seed in [1, 20]:#, 300, 4000]:
-            total_timesteps = 2e4
-            ck_rate = max(1, int(total_timesteps / (25 * EPOCH_TIMESTEPS)))
-            print(ck_rate)
-            rl_sat = TwoSingleAgentsTrainer(args, use_lstm=use_lstm, hidden_dim=hidden_dim, fcp_ck_rate=ck_rate,
-                                            seed=seed)
-            rl_sat.train_agents(total_timesteps=total_timesteps)
-            p1s, p2s = rl_sat.get_fcp_agents()
-            p1_agents.extend(p1s)
-            p2_agents.extend(p2s)
+                total_timesteps = 5e6
+                ck_rate = max(1, int(total_timesteps / (25 * EPOCH_TIMESTEPS)))
+                rl_sat = TwoSingleAgentsTrainer(args, use_lstm=use_lstm, hidden_dim=hidden_dim, fcp_ck_rate=ck_rate,
+                                                seed=seed)
+                rl_sat.train_agents(total_timesteps=total_timesteps)
+                p1s, p2s = rl_sat.get_fcp_agents()
+                p1_agents.extend(p1s)
+                p2_agents.extend(p2s)
         pop_p1, pop_p2 = Population(p1_agents, 0, args), Population(p2_agents, 1, args)
         pop_p1.save(str(self.args.base_dir / 'agent_models' / 'population' / self.args.layout_name / 'p1s'))
         pop_p2.save(str(self.args.base_dir / 'agent_models' / 'population' / self.args.layout_name / 'p2s'))
@@ -348,15 +349,15 @@ class Population:
 
 if __name__ == '__main__':
     args = get_arguments()
-    lstm = TwoSingleAgentsTrainer(args, use_lstm=True)
-    lstm.train_agents(total_timesteps=1e6)
-    tsa = TwoSingleAgentsTrainer(args)
-    tsa.train_agents(total_timesteps=1e6)
-    oda = OneDoubleAgentTrainer(args)
-    oda.train_agents(total_timesteps=1e6)
-    # p1, p2 = Population.create_fcp_population(args)
-    # p1 = Poulation.load(str(self.args.base_dir / 'agent_models' / 'population' / self.args.layout_name / 'p1s'))
-    # p2 = Poulation.load(str(self.args.base_dir / 'agent_models' / 'population' / self.args.layout_name / 'p2s'))
+    # lstm = TwoSingleAgentsTrainer(args, use_lstm=True)
+    # lstm.train_agents(total_timesteps=1e6)
+    # tsa = TwoSingleAgentsTrainer(args)
+    # tsa.train_agents(total_timesteps=1e6)
+    # oda = OneDoubleAgentTrainer(args)
+    # oda.train_agents(total_timesteps=1e6)
+    p1, p2 = Population.create_fcp_population(args)
+    p1 = Poulation.load(str(self.args.base_dir / 'agent_models' / 'population' / self.args.layout_name / 'p1s'))
+    p2 = Poulation.load(str(self.args.base_dir / 'agent_models' / 'population' / self.args.layout_name / 'p2s'))
 
 
 

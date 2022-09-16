@@ -424,7 +424,16 @@ class DistBasedManager(Manager):
 if __name__ == '__main__':
     args = get_arguments()
     p_idx, t_idx = 0, 1
-    worker, teammate = MultiAgentSubtaskWorker.create_model_from_scratch(p_idx, args, dataset_file=args.dataset)
+    # worker, teammate = MultiAgentSubtaskWorker.create_model_from_scratch(p_idx, args, dataset_file=args.dataset)
+
+    worker = MultiAgentSubtaskWorker.load(
+        '/projects/star7023/oai/agent_models/multi_agent_subtask_worker/counter_circuit_o_1order/fr')
+
+    bct = BehavioralCloningTrainer(args.dataset, args)
+    bct.train_agents(epochs=50)
+    tm = bct.get_agent(p_idx=t_idx)
+
+
 
     #create_rl_worker(args.dataset, p_idx, args)
     # tsat = TwoSingleAgentsTrainer(args)
