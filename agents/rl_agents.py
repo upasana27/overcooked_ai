@@ -331,7 +331,7 @@ class Population:
         p2_agents = []
         for use_lstm in [True, False]:
             # hidden_dim = 16
-            # seed = 0
+            seed = 8
             for hidden_dim in [16, 256]:
             #     for seed in [1, 20]:#, 300, 4000]:
                 total_timesteps = 5e6
