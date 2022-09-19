@@ -41,6 +41,7 @@ class SB3SingleAgentLSTMWrapper(SB3Wrapper):
         super(SB3SingleAgentLSTMWrapper, self).__init__(agent, name, p_idx, args)
         self.episode_starts = np.ones((1,), dtype=bool)
         self.lstm_states = None
+
     def predict(self, obs):
         action, self.lstm_states = self.agent.predict(obs, state=self.lstm_states, episode_start=self.episode_starts,
                                                       deterministic=True)
