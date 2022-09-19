@@ -67,15 +67,15 @@ class MultiAgentSubtaskWorker(OAIAgent):
         device = args.device
         saved_variables = th.load(path, map_location=device)
         set_args_from_load(saved_variables['args'], args)
-        saved_variables['const_data']['args'] = args
+        saved_variables['const_args']['args'] = args
 
         # Load weights
         agents = []
-        for agent_path in save_dict['agent_paths']:
-            agent = saved_variables['sb3_model_type'].load(agent_path)
+        for agent_path in saved_variables['agent_paths']:
+            agent = saved_variables['sb3_model_type'].load(agent_path, args)
             agent.to(device)
             agents.append(agent)
-        return cls(agents=agents, **saved_variables['const_params'], **kwargs)
+        return cls(agents=agents, p_idx=saved_variables['const_args']['p_idx'], args=args)
 
     @classmethod
     def create_model_from_scratch(cls, p_idx, args, dataset_file=None) -> 'OAIAgent':
@@ -214,12 +214,13 @@ class RLManagerWrapper(SB3SingleAgentWrapper, Manager):
 
 class RLManagerTrainer(SingleAgentTrainer):
     ''' Train an RL agent to play with a provided agent '''
-    def __init__(self, worker, teammate, teammate_idx, args):
+    def __init__(self, worker, teammates, teammate_idx, args):
+        teammate = teammates[0]
         kwargs = {'worker': worker, 'teammate': teammate, 'shape_rewards': True, 'args': args}
-        env = make_vec_env(OvercookedGymEnv, n_envs=args.n_envs, env_kwargs={**kwargs})
+        env = make_vec_env(OvercookedManagerGymEnv, n_envs=args.n_envs, env_kwargs=kwargs)
         eval_env = OvercookedManagerGymEnv(**kwargs)
         self.worker = worker
-        super(RLManagerTrainer, self).__init__(teammate, teammate_idx, args, env=env, eval_env=eval_env)
+        super(RLManagerTrainer, self).__init__(teammates, teammate_idx, args, env=env, eval_env=eval_env)
         assert worker.p_idx == self.p_idx and teammate.p_idx == self.t_idx
 
     def wrap_agent(self, rl_agent):
@@ -427,11 +428,11 @@ if __name__ == '__main__':
     # worker, teammate = MultiAgentSubtaskWorker.create_model_from_scratch(p_idx, args, dataset_file=args.dataset)
 
     worker = MultiAgentSubtaskWorker.load(
-        '/projects/star7023/oai/agent_models/multi_agent_subtask_worker/counter_circuit_o_1order/fr')
+        '/projects/star7023/oai/agent_models/multi_agent_subtask_worker/counter_circuit_o_1order/fr', args)
 
     bct = BehavioralCloningTrainer(args.dataset, args)
     bct.train_agents(epochs=50)
-    tm = bct.get_agent(p_idx=t_idx)
+    teammate = bct.get_agent(p_idx=t_idx)
 
 
 
@@ -439,8 +440,8 @@ if __name__ == '__main__':
     # tsat = TwoSingleAgentsTrainer(args)
     # tsat.train_agents(total_timesteps=1e6)
     # teammate = tsat.get_agent(t_idx)
-    rlmt = RLManagerTrainer(worker, teammate, t_idx, args)
-    rlmt.train_agents(total_timesteps=1e8, exp_name=args.exp_name + '_manager')
-print('done')
+    rlmt = RLManagerTrainer(worker, [teammate], t_idx, args)
+    rlmt.train_agents(total_timesteps=1e7, exp_name=args.exp_name + '_manager')
+    print('done')
 
 
