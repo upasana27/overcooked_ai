@@ -12,7 +12,7 @@ class SingleActionAgent(OAIAgent):
         self.action = Action.ACTION_TO_INDEX[action]
         self.name = f'single_action_agent_{Action.ACTION_TO_CHAR[action]}'
 
-    def predict(self, obs: th.Tensor, sample=True):
+    def predict(self, obs: th.Tensor, state=None, episode_start=None, deterministic=False):
         return self.action, None
 
     def get_distribution(self, obs: th.Tensor):
@@ -33,7 +33,7 @@ class UniformActionAgent(OAIAgent):
         self.action = Action.ACTION_TO_INDEX[action]
         self.name = f'uniform_action_agent'
 
-    def predict(self, obs: th.Tensor, sample=True):
+    def predict(self, obs: th.Tensor, state=None, episode_start=None, deterministic=False):
         probs = np.full(len(Action.ALL_ACTIONS), 1 / len(Action.ALL_ACTIONS))
         return Categorical(probs=probs).sample()
 

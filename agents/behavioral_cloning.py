@@ -65,9 +65,9 @@ class BehaviouralCloningPolicy(nn.Module):
     def forward(self, obs):
         return self.action_predictor(self.get_latent_feats(obs))
 
-    def predict(self, obs, sample=True):
+    def predict(self, obs, state=None, episode_start=None, deterministic=False):
         """Predict action. If sample is True, sample action from distribution, else pick best scoring action"""
-        return Categorical(logits=self.forward(obs)).sample() if sample else th.argmax(self.forward(obs), dim=-1), None
+        return Categorical(logits=self.forward(obs)).sample() if deterministic else th.argmax(self.forward(obs), dim=-1), None
 
     def get_distribution(self, obs):
         return Categorical(logits=self.forward(obs))
@@ -97,10 +97,10 @@ class BehaviouralCloningAgent(OAIAgent):
         z = self.policy.get_latent_feats(obs)
         return self.policy.action_predictor(z)
 
-    def predict(self, obs, sample=True):
+    def predict(self, obs, state=None, episode_start=None, deterministic=False):
         obs = {k: th.tensor(v, device=self.device).unsqueeze(0) for k, v in obs.items()}
         action_logits = self.forward(obs)
-        action = Categorical(logits=action_logits).sample() if sample else th.argmax(action_logits, dim=-1)
+        action = Categorical(logits=action_logits).sample() if deterministic else th.argmax(action_logits, dim=-1)
         return action, None
 
     def get_distribution(self, obs: th.Tensor):
@@ -178,10 +178,10 @@ class BehavioralCloningTrainer(OAITrainer):
                 mean_reward = self.evaluate(self.agent, self.agent, timestep=epoch)
                 wandb.log({'mean_loss': mean_loss, 'epoch': epoch})
                 if mean_reward > best_reward:
-                    best_path, best_tag = self.save()
+                    best_path, best_tag = self.save_agents()
                     best_reward = mean_reward
         if best_path is not None:
-            self.load(best_path, best_tag)
+            self.load_agents(best_path, best_tag)
         run.finish()
 
 
@@ -190,7 +190,6 @@ if __name__ == '__main__':
     eval_only = False
     if eval_only:
         bct = BehavioralCloningTrainer('tf_test_5_5.2.pickle', args, vis_eval=True)
-        bct.load()
         bct.evaluate(10)
     else:
         args.batch_size = 4

@@ -86,11 +86,11 @@ class TypeBasedAdaptor(OAIAgent):
             total_reward += np.sum(info['sparse_r_by_agent'])
         return total_reward
 
-    def predict(self, obs: th.Tensor, sample=True) -> Tuple[int, Union[th.Tensor, None]]:
+    def predict(self, obs: th.Tensor, state=None, episode_start=None, deterministic=False) -> Tuple[int, Union[th.Tensor, None]]:
         """
         Given an observation return the index of the action and the agent state if the agent is recurrent.
         """
-        return self.policy.predict(obs, sample=sample)
+        return self.policy.predict(obs, state=state, episode_start=episode_start, deterministic=deterministic)
 
     def get_distribution(self, obs: th.Tensor):
         return self.policy.get_distribution(obs)

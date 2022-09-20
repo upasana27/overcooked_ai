@@ -2,12 +2,15 @@ from abc import ABC, abstractmethod
 import argparse
 from arguments import get_args_to_save, set_args_from_load
 from pathlib import Path
+import numpy as np
 from state_encodings import ENCODING_SCHEMES
 import torch as th
 import torch.nn as nn
 from typing import Tuple, Union
 import stable_baselines3.common.distributions as sb3_distributions
 from stable_baselines3.common.evaluation import evaluate_policy
+import wandb
+
 
 class OAIAgent(nn.Module, ABC):
     """
@@ -25,7 +28,7 @@ class OAIAgent(nn.Module, ABC):
         self.policy = None
 
     @abstractmethod
-    def predict(self, obs: th.Tensor, sample: bool=True) -> Tuple[int, Union[th.Tensor, None]]:
+    def predict(self, obs: th.Tensor, state=None, episode_start=None, deterministic: bool=False) -> Tuple[int, Union[th.Tensor, None]]:
         """
         Given an observation return the index of the action and the agent state if the agent is recurrent.
         Structure should be the same as agents created using stable baselines:
@@ -78,8 +81,8 @@ class SB3Wrapper(OAIAgent):
         self.policy = self.agent.policy
         self.num_timesteps = 0
 
-    def predict(self, obs, sample=True):
-        return self.agent.predict(obs, deterministic=(not sample))
+    def predict(self, obs, state=None, episode_start=None, deterministic=False):
+        return self.agent.predict(obs, state=state, episode_start=episode_start, deterministic=deterministic)
 
     def get_distribution(self, obs: th.Tensor):
         return self.agent.get_distribution(obs)
@@ -95,7 +98,7 @@ class SB3Wrapper(OAIAgent):
         """
         args = get_args_to_save(self.args)
         th.save({'sb3_model_type': type(self.agent), 'const_params': self._get_constructor_parameters(), 'args': args},
-                str(path) + '_non_sb3_data')
+                       str(path) + '_non_sb3_data')
         self.agent.save(path)
 
     @classmethod
@@ -123,11 +126,11 @@ class SB3LSTMWrapper(SB3Wrapper):
         super(SB3LSTMWrapper, self).__init__(agent, name, args)
         self.lstm_states = None
 
-    def predict(self, obs, sample=True, episode_starts=None):
+    def predict(self, obs, state=None, episode_start=None, deterministic=False):
         # TODO pass in episode starts
-        episode_starts = episode_starts or np.ones((1,), dtype=bool)
-        action, self.lstm_states = self.agent.predict(obs, state=self.lstm_states, episode_start=episode_starts,
-                                                      deterministic=(not sample))
+        episode_start = episode_start or np.ones((1,), dtype=bool)
+        action, self.lstm_states = self.agent.predict(obs, state=state, episode_start=episode_start,
+                                                      deterministic=deterministic)
         return action, self.lstm_states
 
     def get_distribution(self, obs: th.Tensor):
@@ -146,6 +149,9 @@ class OAITrainer(ABC):
         self.ck_list = []
         if seed is not None:
             th.manual_seed(seed)
+
+    def _get_constructor_parameters(self):
+        return dict(name=self.name, args=self.args)
 
     def evaluate(self, eval_agent, eval_teammate, num_episodes=10, visualize=False, timestep=None):
         if visualize and not self.eval_env.visualization_enabled:
@@ -168,18 +174,32 @@ class OAITrainer(ABC):
         """
         return self.agents
 
-    def save(self, path: Union[str, None] = None, tag: Union[str, None] = None):
+    def save_agents(self, path: Union[str, None] = None, tag: Union[str, None] = None):
         ''' Saves each agent that the trainer is training '''
         path = path or self.args.base_dir / 'agent_models' / self.name / self.args.layout_name
-        Path(path).mkdir(parents=True, exist_ok=True)
         tag = tag or self.args.exp_name
-        for i in range(len(self.agents)):
-            self.agents[i].save(path / (tag + f'_agent{i + 1}'))
+        save_path = path / tag
+        agent_path = path / (tag + '_agents_dir')
+        Path(agent_path).mkdir(parents=True, exist_ok=True)
+        save_dict = {'model_type': type(self.agents[0]), 'agent_paths': []}
+        for i, agent in enumerate(self.agents):
+            agent_path_i = agent_path / 'agent_{i}'
+            agent.save(agent_path)
+            save_dict['agent_paths'].append(agent_path_i)
+        th.save(save_dict, save_path)
         return path, tag
 
-    def load(self, path: Union[str, None]=None, tag: Union[str, None]=None):
+    def load_agents(self, path: Union[str, None]=None, tag: Union[str, None]=None):
         ''' Loads each agent that the trainer is training '''
-        path = path or self.args.base_dir / 'agent_models' / self.name / self.args.layout_name
-        tag = tag or self.args.exp_name
-        for i in range(2):
-            self.agents[i] = self.agents[i].load(path / (tag + f'_p{i + 1}'), self.args)
+        device = self.args.device
+        saved_variables = th.load(path, map_location=device)
+        set_args_from_load(saved_variables['args'], args)
+
+        # Load weights
+        agents = []
+        for agent_path in save_dict['agent_paths']:
+            agent = saved_variables['model_type'].load(agent_path, self.args)
+            agent.to(device)
+            agents.append(agent)
+        self.agents = agents
+        return self.agents

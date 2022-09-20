@@ -44,6 +44,7 @@ class OvercookedGymEnv(Env):
         self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
         self.visualization_enabled = False
         self.step_count = 0
+        self.teammate = None
         obs = self.reset()
         self.visual_obs_shape = obs['visual_obs'].shape if 'visual_obs' in obs else 0
         self.agent_obs_shape = obs['agent_obs'].shape if 'agent_obs' in obs else 0
@@ -90,6 +91,8 @@ class OvercookedGymEnv(Env):
         return obs
 
     def step(self, action):
+        if not self.play_both_players and self.teammate is None:
+            raise ValueError('set_teammate must be set called before starting game unless play_both_players is True')
         if self.play_both_players: # We control both agents
             joint_action = action
         else: # We control 1 agent
@@ -117,11 +120,9 @@ class OvercookedGymEnv(Env):
         return self.get_obs(self.p_idx), reward, done, info
 
     def reset(self):
-        if not self.play_both_players and self.teammate is None:
-            raise ValueError('set_teammate must be set called before starting game unless play_both_players is True')
         if not self.play_both_players:
             self.p_idx = np.random.randint(2)
-            self.t_idx = 1 - self.t_idx
+            self.t_idx = 1 - self.p_idx
         self.env.reset()
         self.prev_state = None
         self.state = self.env.state
@@ -148,7 +149,7 @@ class DummyAgent:
     def __init__(self, action=Action.STAY):
         self.action = Action.ACTION_TO_INDEX[action]
 
-    def predict(self, x, sample=True):
+    def predict(self, x, state=None, episode_start=None, deterministic=False):
         return self.action, None
 
 if __name__ == '__main__':

@@ -36,9 +36,10 @@ class MultiAgentSubtaskWorker(OAIAgent):
         super(MultiAgentSubtaskWorker, self).__init__('multi_agent_subtask_worker', args)
         self.agents = agents
 
-    def predict(self, obs: th.Tensor, sample=True):
+    def predict(self, obs: th.Tensor, state=None, episode_start=None, deterministic: bool=False):
         assert 'curr_subtask' in obs.keys()
-        agent_preds = [self.agents[st].predict(obs, sample=sample) for st in obs['curr_subtask']]
+        preds = [self.agents[st].predict(obs, state=state, episode_start=episode_start, deterministic=deterministic)
+                 for st in obs['curr_subtask']]
         actions, states = zip(*agent_preds)
         return actions, states
 
@@ -148,10 +149,11 @@ class HierarchicalRL(OAIAgent):
         obs['curr_subtask'] = self.curr_subtask_id
         return self.worker.get_distribution(obs, sample=sample)
 
-    def predict(self, obs, sample=True):
+    def predict(self, obs, state=None, episode_start=None, deterministic: bool=False):
         if obs['player_completed_subtasks'] is not None:
             # Completed previous subtask, set new subtask
-            self.curr_subtask_id = self.manager.predict(obs, sample=sample)[0]
+            self.curr_subtask_id = self.manager.predict(obs, state=state, episode_start=episode_start,
+                                                        deterministic=deterministic)[0]
         obs['curr_subtask'] = self.curr_subtask_id
         return self.worker.predict(obs, sample=sample)
 
@@ -168,7 +170,7 @@ class HierarchicalRL(OAIAgent):
         th.save({'worker_type': type(self.worker), 'worker_path': worker_save_path,
                  'manager_type': type(self.manager), 'manager_path': manager_save_path,
                  'const_params': self._get_constructor_parameters(), 'args': args},
-                str(path) + '_non_sb3_data')
+                       str(path) + '_non_sb3_data')
 
     @classmethod
     def load(cls, path: str, args) -> 'OAIAgent':
@@ -179,7 +181,7 @@ class HierarchicalRL(OAIAgent):
         :return:
         """
         device = args.device
-        saved_variables = th.load(str(path)  + '_non_sb3_data', map_location=device)
+        saved_variables = th.load(str(path) + '_non_sb3_data', map_location=device)
         set_args_from_load(saved_variables['args'], args)
         worker = saved_variables['worker_type'].load(saved_variables['worker_path'], args)
         manager = saved_variables['manager_type'].load(saved_variables['manager_path'], args)
