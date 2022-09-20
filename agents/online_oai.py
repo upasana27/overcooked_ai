@@ -204,6 +204,7 @@ class App:
 
         if done:
             self._running = False
+        return done
 
     def on_render(self, pidx=None):
         p0_action = Action.ACTION_TO_INDEX[self.joint_action[0]] if pidx == 1 else None
@@ -214,23 +215,6 @@ class App:
 
     def on_cleanup(self):
         pygame.quit()
-
-    def collection_execution(self):
-        if self.on_init() == False:
-            self._running = False
-        while (self._running):
-            self.joint_action = [None, None]
-            for i in range(2):
-                self.on_render(pidx=i)
-                while self.joint_action[i] is None:
-                    for event in pygame.event.get():
-                        self.on_event(event, i)
-                    pygame.event.pump()
-            self.on_loop()
-
-        self.save_trajectory()
-        self.on_cleanup()
-        print(f'Trial finished in {self.curr_tick} steps with total reward {self.score}')
 
     def play_execution(self):
         if self.on_init() == False:
@@ -308,11 +292,7 @@ def main():
     #                     help="type of run, (i.e. pbt, bc, ppo, etc)", required=True)
     # parser.add_argument("-r", "--run_dir", dest="run",
     #                     help="tag of run dir in data/*_runs/", required=True)
-    additional_args = [
-        ('--combine', {'action': 'store_true', 'help': 'Combine all previous trials'}),
-        ('--traj-file', {'type': str, 'default': None, 'help': 'trajectory file to run'}),
-        ('--agent-file', {'type': str, 'default': None, 'help': 'agent file to load'}),
-    ]
+
     # parser.add_argument("-no_slowed", "--no_slowed_down", dest="slow",
     #                     help="Slow down time for human to simulate actual test time", action='store_false')
     # parser.add_argument("-s", "--seed", dest="seed", required=False, default=0)
@@ -323,21 +303,57 @@ def main():
     # parser.add_argument('--agent-file', type=str, default=None, help='trajectory file to run')
 
 
-    agents = [DummyAgent(), 'human']
-    args = get_arguments(additional_args)
-    dc = App(args, traj_file=args.traj_file, agents=agents)
+
+
+
     dc.on_execute()
 
 async def main():
-    while States.draw():
+    print('1')
+    additional_args = [
+        ('--combine', {'action': 'store_true', 'help': 'Combine all previous trials'}),
+        ('--traj-file', {'type': str, 'default': None, 'help': 'trajectory file to run'}),
+        ('--agent-file', {'type': str, 'default': None, 'help': 'agent file to load'}),
+    ]
+    args = get_arguments(additional_args)
+    agents = [DummyAgent(), 'human']
+    dc = App(args, traj_file=args.traj_file, agents=agents)
+    print('2')
+
+    dc.on_init()
+    done = False
+    sleep_time = 1000 // dc.fps
+    for i in range(2):
+        if isinstance(dc.agents[i], OAIAgent):
+            dc.agents[i].reset(dc.env.state)
+    print('3')
+    while (not done):
+        dc.joint_action = [None, None]
+        for i in range(2):
+            if dc.agents[i] == 'human':
+                dc.on_render(pidx=i)
+                while dc.joint_action[i] is None:
+                    for event in pygame.event.get():
+                        self.on_event(event, i)
+                    pygame.event.pump()
+            else:
+                obs = dc.env.get_obs(i)
+                dc.joint_action[i] = dc.agents[i].predict(obs)[0].squeeze().detach().item()
+                pygame.time.wait(sleep_time)
+        print('4')
+        dc.on_render()
+        done = dc.on_loop()
         pygame.display.update()
         await asyncio.sleep(0)
+
+    dc.on_cleanup()
+    print(f'Trial finished in {self.curr_tick} steps with total reward {self.score}')
 
     pygame.quit()
     sys.exit(0)
 
 
-States.select("Menu_main")
+# States.select("Menu_main")
 
 if __name__ == "__main__":
     asyncio.run(main())

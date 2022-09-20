@@ -168,9 +168,6 @@ class App:
         else:
             obs, reward, done, info = self.env.step(joint_action)
         new_state = self.env.state
-        for i in range(2):
-            if isinstance(self.agents[i], OAIAgent):
-                self.agents[i].step(new_state, joint_action)
         # prev_state, joint_action, info = super(OvercookedPsiturk, self).apply_actions()
 
         # Log data to send to psiturk client

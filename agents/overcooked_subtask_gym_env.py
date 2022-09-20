@@ -14,8 +14,7 @@ import torch.nn.functional as F
 
 
 class OvercookedSubtaskGymEnv(OvercookedGymEnv):
-    def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, randomize_start=True,
-                 single_subtask_id=None, use_curriculum=False, args=None):
+    def __init__(self, grid_shape=None, single_subtask_id=None, use_curriculum=False, args=None):
         self.use_curriculum = use_curriculum
         self.use_single_subtask = single_subtask_id is not None
         assert not (use_curriculum and self.use_single_subtask)  # only one of them can be true
@@ -37,15 +36,15 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         self.mlam = MediumLevelActionManager.from_pickle_or_compute(self.mdp, COUNTERS_PARAMS, force_compute=False)
         ss_fn = self.mdp.get_subtask_start_state_fn(self.mlam, random_start_pos=True, random_orientation=True)
         env = OvercookedEnv.from_mdp(self.mdp, horizon=100, start_state_fn=ss_fn)
-        super(OvercookedSubtaskGymEnv, self).__init__(p1, p2, grid_shape, shape_rewards, base_env=env, args=args)
+        super(OvercookedSubtaskGymEnv, self).__init__(grid_shape=grid_shape, base_env=env, args=args)
         assert any(self.agents) and self.p_idx is not None
-        self.obs_dict['subtask'] =  spaces.Box(0, 1, (1,), dtype=np.int32)
+        self.obs_dict['curr_subtask'] =  spaces.Discrete(Subtasks.NUM_SUBTASKS)
         self.observation_space = spaces.Dict(self.obs_dict)
 
     def get_obs(self, p_idx=None):
         obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
         if p_idx == self.p_idx:
-            obs['subtask'] = [self.goal_subtask_id]
+            obs['curr_subtask'] = [self.goal_subtask_id]
         return obs
 
     def get_proximity_reward(self, feature_locations):
@@ -69,18 +68,17 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         return (curr_dist - smallest_dist) * 0.1
 
     def step(self, action):
-        joint_action = [(self.agents[i].predict(self.get_obs(p_idx=i))[0] if self.agents[i] else action) for i in range(2)]
+        joint_action = [None, None]
+        joint_action[self.p_idx] = action
+        joint_action[self.t_idx] = self.teammate.predict(self.get_obs(p_idx=self.t_idx))[0]
         joint_action = [Action.INDEX_TO_ACTION[a] for a in joint_action]
 
         # If the state didn't change from the previous timestep and the agent is choosing the same action
         # then play a random action instead. Prevents agents from getting stuck
-        if self.state.time_independent_equal(self.prev_state) and tuple(joint_action) == self.prev_actions:
+        if self.prev_state and self.state.time_independent_equal(self.prev_state) and tuple(joint_action) == self.prev_actions:
             joint_action = [np.random.choice(Action.ALL_ACTIONS), np.random.choice(Action.ALL_ACTIONS)]
 
         self.prev_state, self.prev_actions = deepcopy(self.state), joint_action
-        for i in range(2):
-            if isinstance(self.agents[i], OAIAgent):
-                self.agents[i].step(self.prev_state, joint_action)
         next_state, _, done, info = self.env.step(joint_action)
         self.state = self.env.state
 
@@ -103,6 +101,11 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         return self.get_obs(self.p_idx), reward, done, info
 
     def reset(self, evaluate=False):
+        if self.teammate is None:
+            raise ValueError('set_teammate must be set called before starting game unless play_both_players is True')
+        self.p_idx = np.random.randint(2)
+        self.t_idx = 1 - self.t_idx
+        # TODO randomly set p_idx
         if self.use_single_subtask:
             self.goal_subtask = self.single_subtask
         else:
@@ -114,32 +117,32 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
             subtask_probs = subtask_mask / np.sum(subtask_mask)
             self.goal_subtask = np.random.choice(Subtasks.SUBTASKS, p=subtask_probs)
         self.goal_subtask_id = Subtasks.SUBTASKS_TO_IDS[self.goal_subtask]
-        self.env.reset(start_state_kwargs={'p_idx': self.p_idx, 'subtask': self.goal_subtask})
+        self.env.reset(start_state_kwargs={'p_idx': self.p_idx, 'curr_subtask': self.goal_subtask})
         self.state = self.env.state
         if self.goal_subtask != 'unknown':
             assert get_doable_subtasks(self.state, self.mdp.terrain_mtx, self.p_idx)[self.goal_subtask_id]
-
-        for i in range(2):
-            if isinstance(self.agents[i], OAIAgent):
-                self.agents[i].reset(self.state)
         # print(self.goal_subtask)
         return self.get_obs(self.p_idx)
 
-    def evaluate(self, main_agent=None, num_trials=25, other_agent=None):
-        assert main_agent is not None and other_agent is None
+    def evaluate(self, agent):
         results = np.zeros((Subtasks.NUM_SUBTASKS, 2))
+        mean_reward = []
         num_trials = 25
         for trial in range(num_trials):
-            reward, done = 0, False
+            cum_reward, reward, done = 0, 0, False
             obs = self.reset(evaluate=True)
             while not done:
-                action = main_agent.predict(obs)[0]
+                action = agent.predict(obs)[0]
                 obs, reward, done, info = self.step(action)
+                cum_reward += reward
 
             if reward >= 1:
                 results[self.goal_subtask_id][0] += 1
             else:
                 results[self.goal_subtask_id][1] += 1
+            mean_reward.append(cum_reward)
+        mean_reward = np.mean(mean_reward)
+        num_succ = np.sum(results[:, 0])
 
         for subtask in Subtasks.SUBTASKS:
             subtask_id = Subtasks.SUBTASKS_TO_IDS[subtask]
@@ -147,6 +150,7 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         if self.use_curriculum and np.sum(results[:, 0]) == num_trials and self.curr_lvl < Subtasks.NUM_SUBTASKS:
             print(f'Going from level {self.curr_lvl} to {self.curr_lvl + 1}')
             self.curr_lvl += 1
-        return np.sum(results[:, 0]), np.sum(results[:, 0]) == num_trials
+        wandb.log({'subtask_reward': mean_reward, 'subtask_success': num_succ, 'timestep': agent.num_timesteps})
+        return num_succ == num_trials
 
 

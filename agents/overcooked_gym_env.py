@@ -2,7 +2,9 @@ from agent import OAIAgent
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedState, OvercookedGridworld, Direction, Action
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
+
 from state_encodings import ENCODING_SCHEMES
+from subtasks import Subtasks, calculate_completed_subtask
 
 from copy import deepcopy
 from gym import Env, spaces, make, register
@@ -16,24 +18,32 @@ import torch as th
 class OvercookedGymEnv(Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, p1=None, p2=None, grid_shape=None, shape_rewards=False, base_env=None, horizon=None, args=None):
-        self.args = args
-        self.device = args.device
-        self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
-        self.agents = [p1, p2]
+    def __init__(self, play_both_players=False, base_env=None, horizon=None, grid_shape=None, shape_rewards=False,
+                 ret_completed_subtasks=False, args=None):
+        '''
+        :param play_both_players: If true, play actions of both players. Step requires tuple(int, int) instead of int
+        :param grid_shape: Shape over
+        :param shape_rewards: Shape rewards for RL
+        :param base_env: Base overcooked environment. If None, create env from layout name. Useful if special parameters
+                         are required when creating the environment
+        :param horizon: How many steps to run the env for. If None, default to args.horizon value
+        :param args: Experiment arguments (see arguments.py)
+        '''
+        self.play_both_players = False
         if base_env is None:
             self.mdp = OvercookedGridworld.from_layout_name(args.layout_name)
             horizon = horizon or args.horizon
             self.env = OvercookedEnv.from_mdp(self.mdp, horizon=horizon)
         else:
             self.env = base_env
-        self.visualization_enabled = False
         self.grid_shape = grid_shape or self.env.mdp.shape
         self.shape_rewards = shape_rewards
+        self.return_completed_subtasks = ret_completed_subtasks
+        self.args = args
+        self.device = args.device
+        self.encoding_fn = ENCODING_SCHEMES[args.encoding_fn]
+        self.visualization_enabled = False
         self.step_count = 0
-        # If we play one agent, we play the agent that is not defined, otherwise both agents are equal
-        self.p_idx = (1 if self.agents[0] else 0) if any(self.agents) else None
-        self.t_idx = (self.p_idx + 1) % 2 if self.p_idx is not None else None
         obs = self.reset()
         self.visual_obs_shape = obs['visual_obs'].shape if 'visual_obs' in obs else 0
         self.agent_obs_shape = obs['agent_obs'].shape if 'agent_obs' in obs else 0
@@ -44,19 +54,20 @@ class OvercookedGymEnv(Env):
             self.obs_dict["visual_obs"] = spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int)
         if np.prod(self.agent_obs_shape) > 0:
             self.obs_dict["agent_obs"] =  spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
+        if ret_completed_subtasks:
+            self.obs_dict['player_completed_subtasks'] = spaces.Discrete(Subtasks.NUM_SUBTASKS)
+            self.obs_dict['teammate_completed_subtasks'] = spaces.Discrete(Subtasks.NUM_SUBTASKS)
+            self.terrain = self.mdp.terrain_mtx
         self.observation_space = spaces.Dict(self.obs_dict)
 
-        self.prev_state, self.prev_actions = deepcopy(self.state), (Action.STAY, Action.STAY)
-        if all(self.agents):  # We control no agents
-            self.action_space = spaces.Space()
-        elif any(self.agents):  # We control 1 agent
+        if play_both_players:  # We control both agents
+            self.action_space = spaces.MultiDiscrete([len(Action.ALL_ACTIONS), len(Action.ALL_ACTIONS)])
+        else:  # We control 1 agent
             self.action_space = spaces.Discrete(len(Action.ALL_ACTIONS))
-        else:  # We control both agents
-            self.action_space = spaces.MultiDiscrete([ len(Action.ALL_ACTIONS), len(Action.ALL_ACTIONS) ])
-        
+            self.teammate = None
 
-    def set_agent(self, agent, p_idx):
-        self.agents[p_idx] = agent
+    def set_teammate(self, teammate):
+        self.teammate = teammate
 
     def setup_visualization(self):
         self.visualization_enabled = True
@@ -68,28 +79,33 @@ class OvercookedGymEnv(Env):
 
     def get_obs(self, p_idx=None):
         obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
+        if self.return_completed_subtasks:
+            if self.prev_state is None:
+                obs['player_completed_subtasks'] = Subtasks.SUBTASKS_TO_IDS['unknown']
+                obs['teammate_completed_subtasks'] = Subtasks.SUBTASKS_TO_IDS['unknown']
+            else:
+                comp_st = [calculate_completed_subtask(self.terrain, self.prev_state, self.state, i) for i in range(2)]
+                obs['player_completed_subtasks'] = comp_st[p_idx]
+                obs['teammate_completed_subtasks'] = comp_st[1 - p_idx]
         return obs
 
     def step(self, action):
-        if all(self.agents): # We control no agents
-            joint_action = [self.agents[i].predict(self.get_obs(p_idx=i))[0] for i in range(2)]
-        elif any(self.agents): # We control 1 agent
-            joint_action = [(self.agents[i].predict(self.get_obs(p_idx=i))[0] if self.agents[i] else action)
-                            for i in range(2)]
-        else: # We control both agents
+        if self.play_both_players: # We control both agents
             joint_action = action
+        else: # We control 1 agent
+            joint_action = [None, None]
+            joint_action[self.p_idx] = action
+            joint_action[self.t_idx] = self.teammate.predict(self.get_obs(p_idx=self.t_idx))[0]
 
         joint_action = [Action.INDEX_TO_ACTION[a] for a in joint_action]
 
         # If the state didn't change from the previous timestep and the agent is choosing the same action
         # then play a random action instead. Prevents agents from getting stuck
-        if self.state.time_independent_equal(self.prev_state) and tuple(joint_action) == self.prev_actions:
+        if self.prev_state and self.state.time_independent_equal(self.prev_state) and tuple(joint_action) == self.prev_actions:
             joint_action = [np.random.choice(Action.ALL_ACTIONS), np.random.choice(Action.ALL_ACTIONS)]
 
         self.prev_state, self.prev_actions = deepcopy(self.state), joint_action
-        for i in range(2):
-            if isinstance(self.agents[i], OAIAgent):
-                self.agents[i].step(self.prev_state, joint_action)
+
         next_state, reward, done, info = self.env.step(joint_action)
         self.state = self.env.state
         if self.shape_rewards:
@@ -101,11 +117,14 @@ class OvercookedGymEnv(Env):
         return self.get_obs(self.p_idx), reward, done, info
 
     def reset(self):
+        if not self.play_both_players and self.teammate is None:
+            raise ValueError('set_teammate must be set called before starting game unless play_both_players is True')
+        if not self.play_both_players:
+            self.p_idx = np.random.randint(2)
+            self.t_idx = 1 - self.t_idx
         self.env.reset()
+        self.prev_state = None
         self.state = self.env.state
-        for i in range(2):
-            if isinstance(self.agents[i], OAIAgent):
-                self.agents[i].reset(self.state)
         return self.get_obs(self.p_idx)
 
     def render(self, mode='human', close=False):
@@ -119,50 +138,6 @@ class OvercookedGymEnv(Env):
     def close(self):
         pygame.quit()
 
-    def evaluate(self, main_agent=None, num_trials=25, other_agent=None):
-        reset_p1_to_none, reset_p2_to_none = False, False
-        if all(self.agents):
-            pass
-        elif any(self.agents):
-            if self.agents[0] is None:
-                assert main_agent.p_idx == 0
-                self.agents[0] = main_agent
-                reset_p1_to_none = True
-            else:
-                assert main_agent.p_idx == 1
-                self.agents[1] = main_agent
-                reset_p2_to_none = True
-        else:
-            assert main_agent.p_idx != other_agent.p_idx
-            self.agents[main_agent.p_idx] = main_agent
-            self.agents[(main_agent + 1) % 2] = other_agent
-            reset_p1_to_none, reset_p2_to_none = True, True
-
-        rewards = []
-        for trial in range(num_trials):
-            rewards.append(self.run_full_episode())
-        print(f'Mean reward = {np.mean(rewards)}')
-        if reset_p1_to_none:
-            self.agents[0] = None
-        if reset_p2_to_none:
-            self.agents[1] = None
-        return np.mean(rewards), False
-
-
-    def run_full_episode(self):
-        assert self.agents[0] is not None and self.agents[1] is not None
-        self.reset()
-        for i in range(2):
-            self.agents[i].policy.eval()
-        done = False
-        total_reward = 0
-        while not done:
-            if self.visualization_enabled:
-                self.render()
-            obs, reward, done, info = self.step(None)
-
-            total_reward += np.sum(info['sparse_r_by_agent'])
-        return total_reward
 
 register(
     id='OvercookedGymEnv-v0',
@@ -173,7 +148,7 @@ class DummyAgent:
     def __init__(self, action=Action.STAY):
         self.action = Action.ACTION_TO_INDEX[action]
 
-    def predict(self, x):
+    def predict(self, x, sample=True):
         return self.action, None
 
 if __name__ == '__main__':

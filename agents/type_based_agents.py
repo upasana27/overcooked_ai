@@ -24,30 +24,30 @@ class TypeBasedAdaptor(OAIAgent):
             bct = BehavioralCloningTrainer(dataset_file, args)
             bce = bc_epochs  # (bc_epochs // 5) if dataset_file == 'all_trials.pickle' else bc_epochs
             bct.train_agents(epochs=bce)
-            bc_p1 = bct.get_agent(idx=0)
-            bc_p2 = bct.get_agent(idx=1)
+            bc_p1 = bct.get_agents(idx=0)
+            bc_p2 = bct.get_agents(idx=1)
             p1_agents.append(bc_p1)
             p2_agents.append(bc_p2)
 
         # RL two single agents
         rl_tsat = TwoSingleAgentsTrainer(args)
         rl_tsat.train_agents(total_timesteps=rl_steps)
-        p1_agents.append(rl_tsat.get_agent(idx=0))
-        p2_agents.append(rl_tsat.get_agent(idx=1))
+        p1_agents.append(rl_tsat.get_agents(idx=0))
+        p2_agents.append(rl_tsat.get_agents(idx=1))
 
         # RL double agent
         rl_odat = OneDoubleAgentTrainer(args)
         rl_odat.train_agents(total_timesteps=rl_steps)
-        p1_agents.append(rl_odat.get_agent(idx=0))
-        p2_agents.append(rl_odat.get_agent(idx=1))
+        p1_agents.append(rl_odat.get_agents(idx=0))
+        p2_agents.append(rl_odat.get_agents(idx=1))
 
         # RL single agents trained with BC partner
         rl_sat = SingleAgentTrainer(bc_p2, 1, args)
         rl_sat.train_agents(total_timesteps=rl_steps)
-        p1_agents.append(rl_sat.get_agent(idx=0))
+        p1_agents.append(rl_sat.get_agents(idx=0))
         rl_sat = SingleAgentTrainer(bc_p1, 0, args)
         rl_sat.train_agents(total_timesteps=rl_steps)
-        p2_agents.append(rl_sat.get_agent(idx=1))
+        p2_agents.append(rl_sat.get_agents(idx=1))
 
         # TODO deal with different layouts logic
         selfplay_table = TypeBasedAdaptor.calculate_selfplay_table(p1_agents, p2_agents, args)
@@ -86,11 +86,11 @@ class TypeBasedAdaptor(OAIAgent):
             total_reward += np.sum(info['sparse_r_by_agent'])
         return total_reward
 
-    def predict(self, obs: th.Tensor) -> Tuple[int, Union[th.Tensor, None]]:
+    def predict(self, obs: th.Tensor, sample=True) -> Tuple[int, Union[th.Tensor, None]]:
         """
         Given an observation return the index of the action and the agent state if the agent is recurrent.
         """
-        return self.policy.predict(obs)
+        return self.policy.predict(obs, sample=sample)
 
     def get_distribution(self, obs: th.Tensor):
         return self.policy.get_distribution(obs)
