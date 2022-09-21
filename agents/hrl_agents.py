@@ -38,9 +38,14 @@ class MultiAgentSubtaskWorker(OAIAgent):
 
     def predict(self, obs: th.Tensor, state=None, episode_start=None, deterministic: bool=False):
         assert 'curr_subtask' in obs.keys()
-        preds = [self.agents[st].predict(obs, state=state, episode_start=episode_start, deterministic=deterministic)
-                 for st in obs['curr_subtask']]
-        actions, states = zip(*agent_preds)
+        try: # curr_subtask is iterable because this is a training batch
+            preds = [self.agents[st].predict(obs, state=state, episode_start=episode_start, deterministic=deterministic)
+                     for st in obs['curr_subtask']]
+            actions, states = zip(*preds)
+
+        except TypeError: # curr_subtask is not iterable because this is regular run
+            actions, states = self.agents[obs['curr_subtask']].predict(obs, state=state, episode_start=episode_start,
+                                                                       deterministic=deterministic)
         return actions, states
 
     def get_distribution(self, obs: th.Tensor):
@@ -80,11 +85,13 @@ class MultiAgentSubtaskWorker(OAIAgent):
         return cls(agents=agents, args=args)
 
     @classmethod
-    def create_model_from_scratch(cls, args, dataset_file=None) -> 'OAIAgent':
-        if dataset_file is not None:
+    def create_model_from_scratch(cls, args, teammates=None, dataset_file=None) -> 'OAIAgent':
+        if teammates is not None:
+            tms = teammates
+        elif dataset_file is not None:
             bct = BehavioralCloningTrainer(dataset_file, args)
-            bct.train_agents(epochs=50)
-            tms = bct.get_agents(p_idx=t_idx) # TODO no p_idx or t_idx except in env
+            bct.train_agents(epochs=100)
+            tms = bct.get_agents()
         else:
             tsa = MultipleAgentsTrainer(args)
             tsa.train_agents(total_timesteps=1e8)
@@ -95,12 +102,12 @@ class MultiAgentSubtaskWorker(OAIAgent):
         for i in range(Subtasks.NUM_SUBTASKS):
             # RL single subtask agents trained with BC partner
             kwargs = {'single_subtask_id': i, 'args': args}
-            env = make_vec_env(OvercookedSubtaskGymEnv, n_envs=args.n_envs, env_kwargs=env_kwargs, vec_env_cls=VEC_ENV_CLS)
+            env = make_vec_env(OvercookedSubtaskGymEnv, n_envs=args.n_envs, env_kwargs=kwargs, vec_env_cls=VEC_ENV_CLS)
             eval_env = OvercookedSubtaskGymEnv(**kwargs)
             rl_sat = SingleAgentTrainer(tms, args, env=env, eval_env=eval_env)
             if i != Subtasks.SUBTASKS_TO_IDS['unknown']:
                 rl_sat.train_agents(total_timesteps=5e6, exp_name=args.exp_name + f'_subtask_{i}')
-            agents.append(rl_sat.get_agents())
+            agents.extend(rl_sat.get_agents())
         model = cls(agents=agents, args=args)
         path = args.base_dir / 'agent_models' / model.name / args.layout_name
         Path(path).mkdir(parents=True, exist_ok=True)
@@ -130,9 +137,9 @@ class RLManagerTrainer(SingleAgentTrainer):
 
     def wrap_agent(self, rl_agent):
         if self.use_lstm:
-            agent = SB3LSTMWrapper(sb3_agent, f'rl_lstm_manager', self.args)
+            agent = SB3LSTMWrapper(rl_agent, f'rl_lstm_manager', self.args)
         else:
-            agent = SB3Wrapper(sb3_agent, f'rl_manager', self.args)
+            agent = SB3Wrapper(rl_agent, f'rl_manager', self.args)
         return agent
 
 
@@ -192,6 +199,8 @@ class HierarchicalRL(OAIAgent):
         model.to(device)
         return model
 
+
+### EVERYTHING BELOW IS A DRAFT AT BEST
 class ValueBasedManager(Manager):
     """
     Follows a few basic rules. (tm = teammate)
@@ -389,15 +398,14 @@ class DistBasedManager(Manager):
 
 if __name__ == '__main__':
     args = get_arguments()
-    p_idx, t_idx = 0, 1
-    # worker, teammate = MultiAgentSubtaskWorker.create_model_from_scratch(p_idx, args, dataset_file=args.dataset)
+    worker, teammates = MultiAgentSubtaskWorker.create_model_from_scratch(args, dataset_file=args.dataset)
 
-    worker = MultiAgentSubtaskWorker.load(
-        '/projects/star7023/oai/agent_models/multi_agent_subtask_worker/counter_circuit_o_1order/fr', args)
+    # worker = MultiAgentSubtaskWorker.load(
+    #     '/projects/star7023/oai/agent_models/multi_agent_subtask_worker/counter_circuit_o_1order/fr', args)
 
-    bct = BehavioralCloningTrainer(args.dataset, args)
-    bct.train_agents(epochs=50)
-    teammate = bct.get_agents(p_idx=t_idx)
+    # bct = BehavioralCloningTrainer(args.dataset, args)
+    # bct.train_agents(epochs=50)
+    # teammate = bct.get_agents()
 
 
 
@@ -405,7 +413,7 @@ if __name__ == '__main__':
     # tsat = MultipleAgentsTrainer(args)
     # tsat.train_agents(total_timesteps=1e6)
     # teammate = tsat.get_agent(t_idx)
-    rlmt = RLManagerTrainer(worker, [teammate], t_idx, args)
+    rlmt = RLManagerTrainer(worker, teammates, args)
     rlmt.train_agents(total_timesteps=1e7, exp_name=args.exp_name + '_manager')
     print('done')
 

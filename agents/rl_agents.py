@@ -16,7 +16,7 @@ from overcooked_subtask_gym_env import OvercookedSubtaskGymEnv
 from state_encodings import ENCODING_SCHEMES
 
 EPOCH_TIMESTEPS = 10000
-VEC_ENV_CLS = SubprocVecEnv
+VEC_ENV_CLS = DummyVecEnv#SubprocVecEnv
 
 
 class SingleAgentTrainer(OAITrainer):
@@ -83,7 +83,7 @@ class SingleAgentTrainer(OAITrainer):
             eval_teammate = self.teammates[np.random.randint(len(self.teammates))]
             if self.use_subtask_eval:
                 self.eval_env.set_teammate(eval_teammate)
-                mean_reward, all_successes = self.eval_env.evaluate(self.learning_agent)
+                all_successes = self.eval_env.evaluate(self.learning_agent)
                 self.num_success = (self.num_success + 1) if all_successes else 0
                 if self.num_success >= 3:
                     break

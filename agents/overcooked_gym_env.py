@@ -52,12 +52,10 @@ class OvercookedGymEnv(Env):
         # Currently 20 is the default value for recipe time (which I believe is the largest value used
         self.obs_dict = {}
         if np.prod(self.visual_obs_shape) > 0:
-            self.obs_dict["visual_obs"] = spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int)
+            self.obs_dict['visual_obs'] = spaces.Box(0, 20, self.visual_obs_shape, dtype=np.int)
         if np.prod(self.agent_obs_shape) > 0:
-            self.obs_dict["agent_obs"] =  spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
+            self.obs_dict['agent_obs'] = spaces.Box(0, self.args.horizon, self.agent_obs_shape, dtype=np.float32)
         if ret_completed_subtasks:
-            self.obs_dict['player_completed_subtasks'] = spaces.Discrete(Subtasks.NUM_SUBTASKS)
-            self.obs_dict['teammate_completed_subtasks'] = spaces.Discrete(Subtasks.NUM_SUBTASKS)
             self.terrain = self.mdp.terrain_mtx
         self.observation_space = spaces.Dict(self.obs_dict)
 

@@ -55,10 +55,19 @@ class BehaviouralCloningPolicy(nn.Module):
 
     def get_latent_feats(self, obs):
         mlp_input = []
+
+
+
         # Concatenate all input features before passing them to MLP
         if self.use_visual_obs:
+            # Add batch dim, avoids broadcasting errors down the line
+            if len(obs['visual_obs'].shape) == 3:
+                obs['visual_obs'] = obs['visual_obs'].unsqueeze(0)
             mlp_input.append(self.cnn.forward(obs['visual_obs']))
         if self.use_agent_obs:
+            # Add batch dim, avoids broadcasting errors down the line
+            if len(obs['agent_obs'].shape) == 3:
+                obs['agent_obs'] = obs['agent_obs'].unsqueeze(0)
             mlp_input.append(obs['agent_obs'])
         return self.mlp.forward(th.cat(mlp_input, dim=-1))
 
@@ -81,6 +90,7 @@ class BehaviouralCloningAgent(OAIAgent):
         self.device = args.device
         self.policy = BehaviouralCloningPolicy(visual_obs_shape, agent_obs_shape, args, hidden_dim=hidden_dim)
         self.to(self.device)
+        self.num_timesteps = 0
 
     def _get_constructor_parameters(self) -> Dict[str, Any]:
         """
@@ -98,7 +108,7 @@ class BehaviouralCloningAgent(OAIAgent):
         return self.policy.action_predictor(z)
 
     def predict(self, obs, state=None, episode_start=None, deterministic=False):
-        obs = {k: th.tensor(v, device=self.device).unsqueeze(0) for k, v in obs.items()}
+        obs = {k: th.tensor(v, device=self.device) for k, v in obs.items()}
         action_logits = self.forward(obs)
         action = Categorical(logits=action_logits).sample() if deterministic else th.argmax(action_logits, dim=-1)
         return action, None
@@ -154,6 +164,7 @@ class BehavioralCloningTrainer(OAITrainer):
             loss.backward()
             self.optimizer.step()
             losses.append(loss.item())
+            self.agent.num_timesteps += self.args.batch_size
         return losses
 
     def train_epoch(self):
@@ -174,7 +185,7 @@ class BehavioralCloningTrainer(OAITrainer):
         best_reward, best_path, best_tag = 0, None, None
         for epoch in range(epochs):
             mean_loss = self.train_epoch()
-            if (epoch + 1) % 10 == 0:
+            if epoch % 10 == 0:
                 mean_reward = self.evaluate(self.agent, self.agent, timestep=epoch)
                 wandb.log({'mean_loss': mean_loss, 'epoch': epoch})
                 if mean_reward > best_reward:

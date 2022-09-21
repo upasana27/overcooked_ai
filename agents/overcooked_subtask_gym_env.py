@@ -11,6 +11,7 @@ import numpy as np
 from overcooked_ai_py.mdp.overcooked_mdp import Action, Direction
 import torch as th
 import torch.nn.functional as F
+import wandb
 
 
 class OvercookedSubtaskGymEnv(OvercookedGymEnv):
@@ -37,14 +38,13 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         ss_fn = self.mdp.get_subtask_start_state_fn(self.mlam, random_start_pos=True, random_orientation=True)
         env = OvercookedEnv.from_mdp(self.mdp, horizon=100, start_state_fn=ss_fn)
         super(OvercookedSubtaskGymEnv, self).__init__(grid_shape=grid_shape, base_env=env, args=args)
-        assert any(self.agents) and self.p_idx is not None
-        self.obs_dict['curr_subtask'] =  spaces.Discrete(Subtasks.NUM_SUBTASKS)
+        self.obs_dict['curr_subtask'] = spaces.Discrete(Subtasks.NUM_SUBTASKS)
         self.observation_space = spaces.Dict(self.obs_dict)
 
     def get_obs(self, p_idx=None):
         obs = self.encoding_fn(self.env.mdp, self.state, self.grid_shape, self.args.horizon, p_idx=p_idx)
         if p_idx == self.p_idx:
-            obs['curr_subtask'] = [self.goal_subtask_id]
+            obs['curr_subtask'] = self.goal_subtask_id
         return obs
 
     def get_proximity_reward(self, feature_locations):
@@ -68,6 +68,8 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         return (curr_dist - smallest_dist) * 0.1
 
     def step(self, action):
+        if self.teammate is None:
+            raise ValueError('set_teammate must be set called before starting game unless play_both_players is True')
         joint_action = [None, None]
         joint_action[self.p_idx] = action
         joint_action[self.t_idx] = self.teammate.predict(self.get_obs(p_idx=self.t_idx))[0]
@@ -101,10 +103,8 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         return self.get_obs(self.p_idx), reward, done, info
 
     def reset(self, evaluate=False):
-        if self.teammate is None:
-            raise ValueError('set_teammate must be set called before starting game unless play_both_players is True')
         self.p_idx = np.random.randint(2)
-        self.t_idx = 1 - self.t_idx
+        self.t_idx = 1 - self.p_idx
         # TODO randomly set p_idx
         if self.use_single_subtask:
             self.goal_subtask = self.single_subtask
@@ -119,9 +119,9 @@ class OvercookedSubtaskGymEnv(OvercookedGymEnv):
         self.goal_subtask_id = Subtasks.SUBTASKS_TO_IDS[self.goal_subtask]
         self.env.reset(start_state_kwargs={'p_idx': self.p_idx, 'curr_subtask': self.goal_subtask})
         self.state = self.env.state
+        self.prev_state = None
         if self.goal_subtask != 'unknown':
             assert get_doable_subtasks(self.state, self.mdp.terrain_mtx, self.p_idx)[self.goal_subtask_id]
-        # print(self.goal_subtask)
         return self.get_obs(self.p_idx)
 
     def evaluate(self, agent):

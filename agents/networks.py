@@ -75,7 +75,7 @@ class OAISinglePlayerFeatureExtractor(BaseFeaturesExtractor):
         if self.use_vector_obs:
             input_dim += np.prod(observation_space['agent_obs'].shape)
         if self.use_subtask_obs:
-            input_dim += np.prod(observation_space['curr_subtask'].shape)
+            input_dim += observation_space['curr_subtask'].n
 
         # Define MLP for vector/feature based observations
         self.vector_encoder = MLP(input_dim=input_dim, output_dim=features_dim)
