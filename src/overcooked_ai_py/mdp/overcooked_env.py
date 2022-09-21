@@ -222,7 +222,7 @@ class OvercookedEnv(object):
         """
         return self.mdp.featurize_state(state, self.mlam, num_pots=num_pots)
 
-    def reset(self, regen_mdp=True, outside_info={}):
+    def reset(self, regen_mdp=True, outside_info={}, start_state_kwargs={}):
         """
         Resets the environment. Does NOT reset the agent.
         Args:
@@ -240,7 +240,7 @@ class OvercookedEnv(object):
         if self.start_state_fn is None:
             self.state = self.mdp.get_standard_start_state()
         else:
-            self.state = self.start_state_fn()
+            self.state = self.start_state_fn(**start_state_kwargs)
 
         events_dict = { k : [ [] for _ in range(self.mdp.num_players) ] for k in EVENT_TYPES }
         rewards_dict = {

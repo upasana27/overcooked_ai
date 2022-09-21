@@ -791,7 +791,7 @@ class MediumLevelActionManager(object):
         return load_saved_action_manager(filename)
 
     @staticmethod
-    def from_pickle_or_compute(mdp, mlam_params, custom_filename=None, force_compute=False, info=False):
+    def from_pickle_or_compute(mdp, mlam_params, custom_filename=None, force_compute=False, info=True):
         assert isinstance(mdp, OvercookedGridworld)
 
         filename = custom_filename if custom_filename is not None else mdp.layout_name + "_am.pkl"
