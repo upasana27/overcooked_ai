@@ -126,7 +126,7 @@ class MultipleAgentsTrainer(OAITrainer):
         if use_lstm:
             for i in range(num_agents):
                 sb3_agent = RecurrentPPO('MultiInputLstmPolicy', self.env, policy_kwargs=policy_kwargs, verbose=1,
-                                         n_steps=2048, batch_size=16)
+                                         n_steps=1024, batch_size=16)
                 self.agents.append(SB3LSTMWrapper(sb3_agent, f'rl_multiagent_lstm_{i + 1}', args))
         else:
             for i in range(num_agents):
@@ -215,9 +215,10 @@ class MultipleAgentsTrainer(OAITrainer):
         for use_lstm in [True, False]:
             # hidden_dim = 16
             seed = 8
-            for h_dim in [16, 256]:
+            for h_dim in [256, 16]:
                 #     for seed in [1, 20]:#, 300, 4000]:
                 ck_rate = training_steps / 10
+                name = f'lstm_{h_dim}' if use_lstm else f'no_lstm_{h_dim}'
                 mat = MultipleAgentsTrainer(args, num_agents=1, use_lstm=use_lstm, hidden_dim=h_dim,
                                             fcp_ck_rate=ck_rate, seed=seed)
                 mat.train_agents(total_timesteps=training_steps)
@@ -230,8 +231,8 @@ class MultipleAgentsTrainer(OAITrainer):
 
 if __name__ == '__main__':
     args = get_arguments()
-    sp = MultipleAgentsTrainer.create_selfplay_agent(args, training_steps=1e6)
-    pop = MultipleAgentsTrainer.create_fcp_population(args, training_steps=1e6)
+    # sp = MultipleAgentsTrainer.create_selfplay_agent(args, training_steps=3e6)
+    pop = MultipleAgentsTrainer.create_fcp_population(args, training_steps=3e6)
     fcp = SingleAgentTrainer(pop, args, 'fcp')
     fcp.train_agents(1e6)
 
