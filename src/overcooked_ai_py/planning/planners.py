@@ -805,6 +805,8 @@ class MediumLevelActionManager(object):
             if mlam.params != mlam_params or mlam.mdp != mdp:
                 if info:
                     print("medium level action manager with different params or mdp found, computing from scratch")
+                #     print(mlam.params, mlam_params, '\n', mlam.mdp, mdp)
+                # raise ValueError("just getting stacktrace")
                 return MediumLevelActionManager.compute_mlam(filename, mdp, mlam_params, info=info)
 
         except (FileNotFoundError, ModuleNotFoundError, EOFError, AttributeError) as e:
