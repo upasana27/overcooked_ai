@@ -222,7 +222,7 @@ class OvercookedEnv(object):
         """
         return self.mdp.featurize_state(state, self.mlam, num_pots=num_pots)
 
-    def reset(self, regen_mdp=True, outside_info={}, start_state_kwargs={}):
+    def reset(self, regen_mdp=True, outside_info={}, start_state_kwargs=None):
         """
         Resets the environment. Does NOT reset the agent.
         Args:
@@ -233,6 +233,7 @@ class OvercookedEnv(object):
                                  Please note that, if you intend to use this arguments throughout the run,
                                  you need to have a "initial_info" dictionary with the same keys in the "env_params"
         """
+        start_state_kwargs = start_state_kwargs or {}
         if regen_mdp:
             self.mdp = self.mdp_generator_fn(outside_info)
             self._mlam = None

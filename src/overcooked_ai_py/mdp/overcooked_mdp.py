@@ -1058,36 +1058,30 @@ class OvercookedGridworld(object):
             return start_state
         return start_state_fn
 
-    def get_fully_random_start_state_fn(self, mlam, random_start_pos=False, random_orientation=False, rnd_obj_prob_thresh=0.0):
-        def start_state_fn():
-            nonlocal random_start_pos, random_orientation, rnd_obj_prob_thresh
-            if random_start_pos:
+    def get_fully_random_start_state_fn(self, mlam):
+        def start_state_fn(random_pos=False, random_dir=False, max_random_objs=0):
+            if random_pos:
                 valid_positions = self.get_valid_joint_player_positions()
                 start_pos = valid_positions[np.random.choice(len(valid_positions))]
             else:
                 start_pos = self.start_player_positions
 
-            start_state = OvercookedState.from_player_positions(start_pos, bonus_orders=self.start_bonus_orders, all_orders=self.start_all_orders, random_orientation=random_orientation)
+            start_state = OvercookedState.from_player_positions(start_pos, bonus_orders=self.start_bonus_orders, all_orders=self.start_all_orders, random_orientation=random_dir)
 
-            if rnd_obj_prob_thresh == 0:
+            if max_random_objs <= 0:
                 return start_state
 
-            # Arbitrary hard-coding for randomization of objects
-            # For each pot, add a random amount of onions and tomatoes with prob rnd_obj_prob_thresh
-            # Begin the soup cooking with probability rnd_obj_prob_thresh
+            # Randomize pot states
             pots = self.get_pot_states(start_state)["empty"]
             for pot_loc in pots:
-                p = np.random.rand()
-                if p < rnd_obj_prob_thresh:
+                if np.random.rand() < 0.5:
                     n = int(np.random.randint(low=1, high=4))
-                    q = np.random.rand()
-                    cooking_tick = np.random.randint(low=0, high=19) if (n == 3 and q < rnd_obj_prob_thresh) else -1
+                    cooking_tick = np.random.randint(low=0, high=19) if (n == 3) else -1
                     start_state.objects[pot_loc] = SoupState.get_soup(pot_loc, num_onions=n, cooking_tick=cooking_tick)
 
-            # For each player, add a random object with prob rnd_obj_prob_thresh
+            # Randomize held items
             for player in start_state.players:
-                p = np.random.rand()
-                if p < rnd_obj_prob_thresh:
+                if np.random.rand() < 0.5:
                     # Different objects have different probabilities
                     obj = np.random.choice(["dish", "onion", "soup"], p=[0.2, 0.6, 0.2])
                     if obj == "soup":
@@ -1095,34 +1089,34 @@ class OvercookedGridworld(object):
                     else:
                         player.set_object(ObjectState(obj, player.position))
 
-            # For each counter space, add random object with prob rnd_obj_prob_thresh / num free counters
+            # Randomize counter items
+            # For each counter space, add up to max_objects objects on free counters
             free_counters = self.find_free_counters_valid_for_both_players(start_state, mlam)
-            for pos in free_counters:
-                p = np.random.rand()
-                thresh = rnd_obj_prob_thresh / len(free_counters)
-                if p < thresh:
-                    obj = np.random.choice(["dish", "onion", "soup"], p=[0.2, 0.6, 0.2])
-                    if obj == "soup":
-                        obj = SoupState.get_soup(pos, num_onions=3, finished=True)
-                    else:
-                        obj = ObjectState(obj, pos)
-                    start_state.add_object(obj, pos)
+            num_objs = np.random.randint(min(max_random_objs, len(free_counters)))
+            counter_indices = np.random.choice(len(free_counters), size=num_objs, replace=False)
+            for counter_idx in counter_indices:
+                counter_pos = free_counters[counter_idx]
+                obj = np.random.choice(["dish", "onion", "soup"], p=[0.2, 0.6, 0.2])
+                if obj == "soup":
+                    obj = SoupState.get_soup(counter_pos, num_onions=3, finished=True)
+                else:
+                    obj = ObjectState(obj, counter_pos)
+                start_state.add_object(obj, counter_pos)
 
             return start_state
         return start_state_fn
 
-    def get_subtask_start_state_fn(self, mlam, random_start_pos=True, random_orientation=True):
-        def start_state_fn(p_idx=0, curr_subtask='unknown'):
+    def get_subtask_start_state_fn(self, mlam):
+        def start_state_fn(p_idx=0, curr_subtask='unknown', max_random_objs=None, num_random_objects=None):
+            assert max_random_objs is not None or num_random_objects is not None
+            n_random_objs = num_random_objects if num_random_objects is not None else max_random_objs
             t_idx = (p_idx + 1) % 2
-            nonlocal random_start_pos, random_orientation
-            if random_start_pos:
-                valid_positions = self.get_valid_joint_player_positions()
-                start_pos = valid_positions[np.random.choice(len(valid_positions))]
-            else:
-                start_pos = self.start_player_positions
+            valid_positions = self.get_valid_joint_player_positions()
+            start_pos = valid_positions[np.random.choice(len(valid_positions))]
 
-            start_state = OvercookedState.from_player_positions(start_pos, bonus_orders=self.start_bonus_orders, all_orders=self.start_all_orders, random_orientation=random_orientation)
-
+            start_state = OvercookedState.from_player_positions(start_pos, bonus_orders=self.start_bonus_orders,
+                                                                all_orders=self.start_all_orders,
+                                                                random_orientation=True)
             # The player can't be holding anything
             player = start_state.players[p_idx]
             if curr_subtask in ['get_onion_from_dispenser', 'get_plate_from_dish_rack',
@@ -1143,6 +1137,7 @@ class OvercookedGridworld(object):
                     else:
                         obj = ObjectState(obj_name, pos)
                     start_state.add_object(obj, pos)
+                    n_random_objs -= 1
 
             # The player must be holding an onion
             elif curr_subtask in ['put_onion_in_pot', 'put_onion_closer']:
@@ -1163,20 +1158,21 @@ class OvercookedGridworld(object):
             elif curr_subtask in ['put_soup_closer', 'serve_soup']:
                 player.set_object(SoupState.get_soup(player.position, num_onions=3, finished=True))
 
-            # if rnd_obj_prob_thresh == 0:
-            #     return start_state
+            if n_random_objs <= 0:
+                return start_state
 
-            # Arbitrary hard-coding for randomization of objects
-            # For each empty pot, add a random amount of onions and tomatoes with prob rnd_obj_prob_thresh
-            # Begin the soup cooking with probability rnd_obj_prob_thresh
+            # Randomize pot states
+            first_pot_filled = False
             pots = self.get_pot_states(start_state)["empty"]
             for pot_loc in pots:
-                p = np.random.rand()
-                if p < 0.3:
-                    n = int(np.random.randint(low=1, high=4))
+                if np.random.rand() < 0.5:
+                    max_onions = 2 if first_pot_filled and curr_subtask == 'put_onion_in_pot' else 3
+                    n = int(np.random.randint(low=1, high=(max_onions + 1))) # high is exclusive
+                    first_pot_filled = (n == 3)
                     cooking_tick = np.random.randint(low=0, high=19) if (n == 3) else -1
                     start_state.objects[pot_loc] = SoupState.get_soup(pot_loc, num_onions=n, cooking_tick=cooking_tick)
 
+            # Randomize held items
             # What the curr_subtask agent is carrying is already decided. Only randomly assign other agent random object
             player = start_state.players[t_idx]
             p = np.random.rand()
@@ -1188,17 +1184,24 @@ class OvercookedGridworld(object):
                 else:
                     player.set_object(ObjectState(obj, player.position))
 
-            thresh = 0.2
-            for pos in self.find_free_counters_valid_for_both_players(start_state, mlam):
-                p = np.random.rand()
-                if p < thresh:
-                    obj = np.random.choice(["dish", "onion", "soup"], p=[0.2, 0.6, 0.2])
-                    if obj == "soup":
-                        obj = SoupState.get_soup(pos, num_onions=3, finished=True)
-                    else:
-                        obj = ObjectState(obj, pos)
-                    start_state.add_object(obj, pos)
-                    thresh /= 2
+            # Randomize counter items
+            # For each counter space, add up to max_objects objects on free counters
+            if 'closer' in curr_subtask:
+                # Make sure there is a counter free to put the object on
+                n_random_objs -= 1
+            free_counters = self.find_free_counters_valid_for_both_players(start_state, mlam)
+            if num_random_objects is not None:
+                num_objs = n_random_objs
+            else:
+                num_objs = np.random.randint(min(n_random_objs, len(free_counters)))
+            counters = np.random.choice(free_counters, size=num_objs, replace=False)
+            for counter_pos in counters:
+                obj = np.random.choice(["dish", "onion", "soup"], p=[0.2, 0.6, 0.2])
+                if obj == "soup":
+                    obj = SoupState.get_soup(counter_pos, num_onions=3, finished=True)
+                else:
+                    obj = ObjectState(obj, counter_pos)
+                start_state.add_object(obj, counter_pos)
 
             return start_state
         return start_state_fn
@@ -2011,9 +2014,9 @@ class OvercookedGridworld(object):
         all_objects = overcooked_state.all_objects_list
 
         def make_layer(position, value):
-                layer = np.zeros(self.shape)
-                layer[position] = value
-                return layer
+            layer = np.zeros(self.shape)
+            layer[position] = value
+            return layer
 
         def process_for_player(primary_agent_idx):
             # Ensure that primary_agent_idx layers are ordered before other_agent_idx layers
