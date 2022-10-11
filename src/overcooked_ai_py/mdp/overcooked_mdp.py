@@ -1107,8 +1107,7 @@ class OvercookedGridworld(object):
         return start_state_fn
 
     def get_subtask_start_state_fn(self, mlam):
-        def start_state_fn(p_idx=0, curr_subtask='unknown', max_random_objs=None, num_random_objects=None):
-            assert max_random_objs is not None or num_random_objects is not None
+        def start_state_fn(p_idx=0, curr_subtask='unknown', max_random_objs=0, num_random_objects=None):
             n_random_objs = num_random_objects if num_random_objects is not None else max_random_objs
             t_idx = (p_idx + 1) % 2
             valid_positions = self.get_valid_joint_player_positions()
@@ -1194,8 +1193,10 @@ class OvercookedGridworld(object):
                 num_objs = n_random_objs
             else:
                 num_objs = np.random.randint(min(n_random_objs, len(free_counters)))
-            counters = np.random.choice(free_counters, size=num_objs, replace=False)
-            for counter_pos in counters:
+
+            counter_indices = np.random.choice(len(free_counters), size=num_objs, replace=False)
+            for counter_idx in counter_indices:
+                counter_pos = free_counters[counter_idx]
                 obj = np.random.choice(["dish", "onion", "soup"], p=[0.2, 0.6, 0.2])
                 if obj == "soup":
                     obj = SoupState.get_soup(counter_pos, num_onions=3, finished=True)
