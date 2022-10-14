@@ -608,7 +608,6 @@ class OvercookedState(object):
         bonus_orders (list(dict)):   Current orders worth a bonus
         all_orders (list(dict)):     Current orders allowed at all
         timestep (int):  The current timestep of the state
-
         """
         bonus_orders = [Recipe.from_dict(order) for order in bonus_orders]
         all_orders = [Recipe.from_dict(order) for order in all_orders]
@@ -1092,7 +1091,11 @@ class OvercookedGridworld(object):
             # Randomize counter items
             # For each counter space, add up to max_objects objects on free counters
             free_counters = self.find_free_counters_valid_for_both_players(start_state, mlam)
-            num_objs = np.random.randint(min(max_random_objs, len(free_counters)))
+            max_num_objs = min(max_random_objs, len(free_counters))
+            if max_num_objs == 0:
+                return start_state
+
+            num_objs = np.random.randint(max_num_objs)
             counter_indices = np.random.choice(len(free_counters), size=num_objs, replace=False)
             for counter_idx in counter_indices:
                 counter_pos = free_counters[counter_idx]
@@ -1107,15 +1110,19 @@ class OvercookedGridworld(object):
         return start_state_fn
 
     def get_subtask_start_state_fn(self, mlam):
-        def start_state_fn(p_idx=0, curr_subtask='unknown', max_random_objs=0, num_random_objects=None):
+        def start_state_fn(p_idx=0, curr_subtask='unknown', random_pos=False, random_dir=False,
+                           max_random_objs=0, num_random_objects=None):
             n_random_objs = num_random_objects if num_random_objects is not None else max_random_objs
             t_idx = (p_idx + 1) % 2
-            valid_positions = self.get_valid_joint_player_positions()
-            start_pos = valid_positions[np.random.choice(len(valid_positions))]
+            if random_pos:
+                valid_positions = self.get_valid_joint_player_positions()
+                start_pos = valid_positions[np.random.choice(len(valid_positions))]
+            else:
+                start_pos = self.start_player_positions
 
             start_state = OvercookedState.from_player_positions(start_pos, bonus_orders=self.start_bonus_orders,
                                                                 all_orders=self.start_all_orders,
-                                                                random_orientation=True)
+                                                                random_orientation=random_dir)
             # The player can't be holding anything
             player = start_state.players[p_idx]
             if curr_subtask in ['get_onion_from_dispenser', 'get_plate_from_dish_rack',
@@ -1193,6 +1200,9 @@ class OvercookedGridworld(object):
                 num_objs = n_random_objs
             else:
                 num_objs = np.random.randint(min(n_random_objs, len(free_counters)))
+
+            if num_objs == 0:
+                return start_state
 
             counter_indices = np.random.choice(len(free_counters), size=num_objs, replace=False)
             for counter_idx in counter_indices:
