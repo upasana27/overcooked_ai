@@ -1061,10 +1061,10 @@ class OvercookedGridworld(object):
         def start_state_fn(random_pos=False, random_dir=False, max_random_objs=0):
             if random_pos:
                 if self.layout_name == 'asymmetric_advantages':
-                    valid_positions = itertools.product([(7, 1), (5, 2), (6, 2), (7, 2), (5, 3), (6, 3), (7, 3)],
-                                                        [(1, 1), (1, 2), (1, 2), (3, 2), (1, 3), (2, 3), (3, 3)])
+                    valid_positions = list(itertools.product([(7, 1), (5, 2), (6, 2), (7, 2), (5, 3), (6, 3), (7, 3)],
+                                                             [(1, 1), (1, 2), (1, 2), (3, 2), (1, 3), (2, 3), (3, 3)]))
                 elif self.layout_name == 'forced_coordination':
-                    valid_positions = itertools.product([(1, 1), (1, 2), (1, 3)], [(3, 1), (3, 2), (3, 3)])
+                    valid_positions = list(itertools.product([(3, 1), (3, 2), (3, 3)], [(1, 1), (1, 2), (1, 3)]))
                 else:
                     valid_positions = self.get_valid_joint_player_positions()
                 start_pos = valid_positions[np.random.choice(len(valid_positions))]
@@ -1122,10 +1122,10 @@ class OvercookedGridworld(object):
             t_idx = (p_idx + 1) % 2
             if random_pos:
                 if self.layout_name == 'asymmetric_advantages':
-                    valid_positions = itertools.product([(7, 1), (5, 2), (6, 2), (7, 2), (5, 3), (6, 3), (7, 3)],
-                                                        [(1, 1), (1, 2), (1, 2), (3, 2), (1, 3), (2, 3), (3, 3)])
+                    valid_positions = list(itertools.product([(7, 1), (5, 2), (6, 2), (7, 2), (5, 3), (6, 3), (7, 3)],
+                                                             [(1, 1), (1, 2), (1, 2), (3, 2), (1, 3), (2, 3), (3, 3)]))
                 elif self.layout_name == 'forced_coordination':
-                    valid_positions = itertools.product([(1, 1), (1, 2), (1, 3)], [(3, 1), (3, 2), (3, 3)])
+                    valid_positions = list(itertools.product([(3, 1), (3, 2), (3, 3)], [(1, 1), (1, 2), (1, 3)]))
                 else:
                     valid_positions = self.get_valid_joint_player_positions()
                 start_pos = valid_positions[np.random.choice(len(valid_positions))]
