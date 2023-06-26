@@ -1180,13 +1180,13 @@ class OvercookedGridworld(object):
                 return start_state
 
             # Randomize pot states
-            first_pot_filled = False
             pots = self.get_pot_states(start_state)["empty"]
+            pots_filled = 0
             for pot_loc in pots:
                 if np.random.rand() < 0.5:
-                    max_onions = 2 if first_pot_filled and curr_subtask == 'put_onion_in_pot' else 3
+                    max_onions = 2 if pots_filled >= (len(pots) - 1) and curr_subtask == 'put_onion_in_pot' else 3
                     n = int(np.random.randint(low=1, high=(max_onions + 1))) # high is exclusive
-                    first_pot_filled = (n == 3)
+                    pots_filled += int(n == 3)
                     cooking_tick = np.random.randint(low=0, high=19) if (n == 3) else -1
                     start_state.objects[pot_loc] = SoupState.get_soup(pot_loc, num_onions=n, cooking_tick=cooking_tick)
 
