@@ -1148,7 +1148,7 @@ class OvercookedGridworld(object):
                         obj_name = 'dish'
                     elif curr_subtask == 'get_soup_from_counter':
                         obj_name = 'soup'
-                    possible_counters = self.find_free_counters_valid_for_both_players(start_state, mlam)
+                    possible_counters = self.find_free_counters_valid_for_player(start_state, mlam, p_idx)
                     pos = possible_counters[np.random.choice(len(possible_counters))]
                     if obj_name == "soup":
                         obj = SoupState.get_soup(pos, num_onions=3, finished=True)
@@ -1687,6 +1687,17 @@ class OvercookedGridworld(object):
                 free_counters_valid_for_both.append(free_counter)
         return free_counters_valid_for_both
 
+    def find_free_counters_valid_for_player(self, state, mlam, p_idx):
+        """Finds all empty counter locations that are accessible to both players"""
+        player = state.players[p_idx]
+        free_counters = self.get_empty_counter_locations(state)
+        free_counters_valid_for_both = []
+        for free_counter in free_counters:
+            goals = mlam.motion_planner.motion_goals_for_pos[free_counter]
+            if any([mlam.motion_planner.is_valid_motion_start_goal_pair(player.pos_and_or, goal) for goal in goals]):
+                free_counters_valid_for_both.append(free_counter)
+        return free_counters_valid_for_both
+
     def _get_optimal_possible_recipe(self, state, recipe, discounted, potential_params, return_value):
         """
         Traverse the recipe-space graph using DFS to find the best possible recipe that can be made
@@ -2027,7 +2038,7 @@ class OvercookedGridworld(object):
         return np.array(list(self.shape) + [26])
 
 
-    def lossless_state_encoding(self, overcooked_state, horizon=400, debug=False):
+    def lossless_state_encoding(self, overcooked_state, goal_objects=None, horizon=400, debug=False):
         """Featurizes a OvercookedState object into a stack of boolean masks that are easily readable by a CNN"""
         assert self.num_players == 2, "Functionality has to be added to support encondings for > 2 players"
         assert type(debug) is bool
@@ -2036,6 +2047,7 @@ class OvercookedGridworld(object):
         variable_map_features = ["onions_in_pot", "tomatoes_in_pot", "onions_in_soup", "tomatoes_in_soup",
                                  "soup_cook_time_remaining", "soup_done", "dishes", "onions", "tomatoes"]
         urgency_features = ["urgency"]
+        goal_features = ["goal"]
         all_objects = overcooked_state.all_objects_list
 
         def make_layer(position, value):
@@ -2051,7 +2063,7 @@ class OvercookedGridworld(object):
                         for i, d in itertools.product([primary_agent_idx, other_agent_idx], Direction.ALL_DIRECTIONS)]
 
             # LAYERS = ordered_player_features + base_map_features + variable_map_features
-            LAYERS = ordered_player_features + base_map_features + variable_map_features + urgency_features
+            LAYERS = ordered_player_features + base_map_features + variable_map_features + urgency_features + goal_features
             state_mask_dict = {k:np.zeros(self.shape) for k in LAYERS}
 
             # MAP LAYERS
@@ -2061,26 +2073,39 @@ class OvercookedGridworld(object):
             for loc in self.get_counter_locations():
                 state_mask_dict["counter_loc"][loc] = 1
 
+            if goal_objects == "counters":
+                for loc in self.get_empty_counter_locations(overcooked_state):
+                    state_mask_dict["goal"][loc] = 1
+
             for loc in self.get_pot_locations():
                 state_mask_dict["pot_loc"][loc] = 1
 
             for loc in self.get_onion_dispenser_locations():
                 state_mask_dict["onion_disp_loc"][loc] = 1
+                if goal_objects == "onion_dispenser":
+                    state_mask_dict["goal"][loc] = 1
 
             for loc in self.get_tomato_dispenser_locations():
                 state_mask_dict["tomato_disp_loc"][loc] = 1
+                if goal_objects == "tomato_dispenser":
+                    state_mask_dict["goal"][loc] = 1
 
             for loc in self.get_dish_dispenser_locations():
                 state_mask_dict["dish_disp_loc"][loc] = 1
+                if goal_objects == "dish_dispenser":
+                    state_mask_dict["goal"][loc] = 1
 
             for loc in self.get_serving_locations():
                 state_mask_dict["serve_loc"][loc] = 1
+                if goal_objects == "serving_station":
+                    state_mask_dict["goal"][loc] = 1
 
             # PLAYER LAYERS
             for i, player in enumerate(overcooked_state.players):
                 player_orientation_idx = Direction.DIRECTION_TO_INDEX[player.orientation]
                 state_mask_dict["player_{}_loc".format(i)] = make_layer(player.position, 1)
                 state_mask_dict["player_{}_orientation_{}".format(i, player_orientation_idx)] = make_layer(player.position, 1)
+
 
             # OBJECT & STATE LAYERS
             for obj in all_objects:
@@ -2090,17 +2115,24 @@ class OvercookedGridworld(object):
                     # get the ingredients into a {object: number} dictionary
                     ingredients_dict = Counter(obj.ingredients)
                     # assert "onion" in ingredients_dict.keys()
-                    if obj.position in self.get_pot_locations():
-                        if obj.is_idle:
-                            # onions_in_pot and tomatoes_in_pot are used when the soup is idling, and ingredients could still be added
-                            state_mask_dict["onions_in_pot"] += make_layer(obj.position, ingredients_dict["onion"])
-                            state_mask_dict["tomatoes_in_pot"] += make_layer(obj.position, ingredients_dict["tomato"])
-                        else:
-                            state_mask_dict["onions_in_soup"] += make_layer(obj.position, ingredients_dict["onion"])
-                            state_mask_dict["tomatoes_in_soup"] += make_layer(obj.position, ingredients_dict["tomato"])
-                            state_mask_dict["soup_cook_time_remaining"] += make_layer(obj.position, obj.cook_time - obj._cooking_tick)
-                            if obj.is_ready:
-                                state_mask_dict["soup_done"] += make_layer(obj.position, 1)
+                    for pot_loc in self.get_pot_locations():
+                        if obj.position == pot_loc:
+                            if obj.is_idle:
+                                # onions_in_pot and tomatoes_in_pot are used when the soup is idling, and ingredients could still be added
+                                state_mask_dict["onions_in_pot"] += make_layer(obj.position, ingredients_dict["onion"])
+                                state_mask_dict["tomatoes_in_pot"] += make_layer(obj.position, ingredients_dict["tomato"])
+                                if goal_objects == "empty_pot":
+                                    state_mask_dict["goal"][pot_loc] = 1
+                            else:
+                                state_mask_dict["onions_in_soup"] += make_layer(obj.position, ingredients_dict["onion"])
+                                state_mask_dict["tomatoes_in_soup"] += make_layer(obj.position, ingredients_dict["tomato"])
+                                state_mask_dict["soup_cook_time_remaining"] += make_layer(obj.position, obj.cook_time - obj._cooking_tick)
+                                if obj.is_ready:
+                                    state_mask_dict["soup_done"] += make_layer(obj.position, 1)
+                                if goal_objects == "full_pot":
+                                    state_mask_dict["goal"][pot_loc] = 1
+                        elif goal_objects == "empty_pot":
+                            state_mask_dict["goal"][pot_loc] = 1
 
                     else:
                         # If player soup is not in a pot, treat it like a soup that is cooked with remaining time 0
@@ -2110,10 +2142,16 @@ class OvercookedGridworld(object):
 
                 elif obj.name == "dish":
                     state_mask_dict["dishes"] += make_layer(obj.position, 1)
+                    if goal_objects == "dish":
+                        state_mask_dict["goal"][obj.position] = 1
                 elif obj.name == "onion":
                     state_mask_dict["onions"] += make_layer(obj.position, 1)
+                    if goal_objects == "onion":
+                        state_mask_dict["goal"][obj.position] = 1
                 elif obj.name == "tomato":
                     state_mask_dict["tomatoes"] += make_layer(obj.position, 1)
+                    if goal_objects == "tomato":
+                        state_mask_dict["goal"][obj.position] = 1
                 else:
                     raise ValueError("Unrecognized object")
 
