@@ -874,6 +874,7 @@ class OvercookedGridworld(object):
         self.layout_name = layout_name
         self.order_bonus = order_bonus
         self.start_state = start_state
+        self.prev_step_was_collision = False
         self._opt_recipe_discount_cache = {}
         self._opt_recipe_cache = {}
         self._prev_potential_params = {}
@@ -1453,13 +1454,16 @@ class OvercookedGridworld(object):
     def is_transition_collision(self, old_positions, new_positions):
         # Checking for any players ending in same square
         if self.is_joint_position_collision(new_positions):
+            self.prev_step_was_collision = True
             return True
         # Check if any two players crossed paths
         for idx0, idx1 in itertools.combinations(range(self.num_players), 2):
             p1_old, p2_old = old_positions[idx0], old_positions[idx1]
             p1_new, p2_new = new_positions[idx0], new_positions[idx1]
             if p1_new == p2_old and p1_old == p2_new:
+                self.prev_step_was_collision = True
                 return True
+        self.prev_step_was_collision = False
         return False
 
     def is_joint_position_collision(self, joint_position):
