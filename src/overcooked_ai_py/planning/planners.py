@@ -116,8 +116,8 @@ class MotionPlanner(object):
         """Number of actions necessary to go from starting position
         and orientations to goal position and orientation (not including
         interaction action)"""
-        assert self.is_valid_motion_start_goal_pair(start_pos_and_or, goal_pos_and_or), \
-            "Goal position and orientation were not a valid motion goal"
+        if not self.is_valid_motion_start_goal_pair(start_pos_and_or, goal_pos_and_or):
+            return float('inf')
         _, _, plan_cost = self.get_plan(start_pos_and_or, goal_pos_and_or)
         # Removing interaction cost
         return plan_cost - 1
@@ -296,13 +296,13 @@ class MotionPlanner(object):
         position and orientation to any feature in feature_pos_list and perform an interact action
         """
         start_pos = start_pos_and_or[0]
-        assert self.mdp.get_terrain_type_at_pos(start_pos) != 'X'
+        # assert self.mdp.get_terrain_type_at_pos(start_pos) != 'X'
         min_dist = np.Inf
         best_feature = None
         for feature_pos in feature_pos_list:
             for feature_goal in self.motion_goals_for_pos[feature_pos]:
-                if not self.is_valid_motion_start_goal_pair(start_pos_and_or, feature_goal):
-                    continue
+                # if not self.is_valid_motion_start_goal_pair(start_pos_and_or, feature_goal):
+                #     continue
                 curr_dist = self.get_gridworld_distance(start_pos_and_or, feature_goal)
                 if curr_dist < min_dist:
                     best_feature = feature_pos

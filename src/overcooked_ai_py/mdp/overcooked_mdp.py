@@ -2042,7 +2042,7 @@ class OvercookedGridworld(object):
         return np.array(list(self.shape) + [26])
 
 
-    def lossless_state_encoding(self, overcooked_state, goal_objects=None, horizon=400, debug=False):
+    def lossless_state_encoding(self, overcooked_state, goal_objects=None, horizon=400, p_idx=None, debug=False):
         """Featurizes a OvercookedState object into a stack of boolean masks that are easily readable by a CNN"""
         assert self.num_players == 2, "Functionality has to be added to support encondings for > 2 players"
         assert type(debug) is bool
@@ -2178,6 +2178,8 @@ class OvercookedGridworld(object):
             return np.array(state_mask_stack).astype(int)
 
         # NOTE: Currently not very efficient, a decent amount of computation repeated here
+        if p_idx is not None:
+            return process_for_player(p_idx)
         num_players = len(overcooked_state.players)
         final_obs_for_players = tuple(process_for_player(i) for i in range(num_players))
         return final_obs_for_players
@@ -2196,7 +2198,7 @@ class OvercookedGridworld(object):
         total_features = self.num_players * (num_pots * num_pot_features + base_features)
         return (total_features,)
 
-    def featurize_state(self, overcooked_state, mlam, num_pots=2, **kwargs):
+    def featurize_state(self, overcooked_state, mlam, num_pots=2, p_idx=None, **kwargs):
         """
         Encode state with some manually designed features. Works for arbitrary number of players
 
@@ -2317,9 +2319,6 @@ class OvercookedGridworld(object):
 
             return feat_dict
 
-            
-
-
         IDX_TO_OBJ = ["onion", "soup", "dish", "tomato"]
         OBJ_TO_IDX = {o_name: idx for idx, o_name in enumerate(IDX_TO_OBJ)}
 
@@ -2341,12 +2340,12 @@ class OvercookedGridworld(object):
                 all_features["p{}_objs".format(i)] = np.eye(len(IDX_TO_OBJ))[obj_idx]
 
             # Closest feature for each object type
-            all_features = concat_dicts(all_features, make_closest_feature(i, player, "onion", self.get_onion_dispenser_locations() + counter_objects["onion"]))
-            all_features = concat_dicts(all_features, make_closest_feature(i, player, "tomato", self.get_tomato_dispenser_locations() + counter_objects["tomato"]))
-            all_features = concat_dicts(all_features, make_closest_feature(i, player, "dish", self.get_dish_dispenser_locations() + counter_objects["dish"]))
-            all_features = concat_dicts(all_features, make_closest_feature(i, player, "soup", counter_objects["soup"]))
-            all_features = concat_dicts(all_features, make_closest_feature(i, player, "serving", self.get_serving_locations()))
-            all_features = concat_dicts(all_features, make_closest_feature(i, player, "empty_counter", self.get_empty_counter_locations(overcooked_state)))
+            all_features |= make_closest_feature(i, player, "onion", self.get_onion_dispenser_locations() + counter_objects["onion"])
+            all_features |= make_closest_feature(i, player, "tomato", self.get_tomato_dispenser_locations() + counter_objects["tomato"])
+            all_features |= make_closest_feature(i, player, "dish", self.get_dish_dispenser_locations() + counter_objects["dish"])
+            all_features |= make_closest_feature(i, player, "soup", counter_objects["soup"])
+            all_features |= make_closest_feature(i, player, "serving", self.get_serving_locations())
+            all_features |= make_closest_feature(i, player, "empty_counter", self.get_empty_counter_locations(overcooked_state))
 
             # Closest pots info
             pot_locations = self.get_pot_locations().copy()
@@ -2393,6 +2392,8 @@ class OvercookedGridworld(object):
         # Compute a symmetric, player-centric encoding of features for each player
         ordered_features = []
         for i, player_i in enumerate(overcooked_state.players):
+            if p_idx is not None and i != p_idx:
+                continue
             player_i_features = player_features[i]
             player_i_abs_pos = player_absolute_positions[i]
             player_i_rel_pos = player_relative_positions[i]
@@ -2400,7 +2401,7 @@ class OvercookedGridworld(object):
             player_i_ordered_features = np.squeeze(np.concatenate([player_i_features, other_player_features, player_i_rel_pos, player_i_abs_pos]))
             ordered_features.append(player_i_ordered_features)
 
-        return ordered_features
+        return ordered_features if p_idx is None else ordered_features[0]
 
 
     def get_deltas_to_closest_location(self, player, locations, mlam):
