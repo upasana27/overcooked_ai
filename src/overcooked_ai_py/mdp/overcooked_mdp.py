@@ -2084,6 +2084,16 @@ class OvercookedGridworld(object):
             for loc in self.get_pot_locations():
                 state_mask_dict["pot_loc"][loc] = 1
 
+            if goal_objects == "empty_pot":            
+                pot_states = self.get_pot_states(overcooked_state)
+                for loc in pot_states['empty'] + pot_states['1_items'] + pot_states['2_items']:
+                    state_mask_dict["goal"][loc] = 1
+              
+            if goal_objects == "full_pot":            
+                pot_states = self.get_pot_states(overcooked_state)
+                for loc in pot_states['cooking'] + pot_states['ready']:
+                    state_mask_dict["goal"][loc] = 1
+
             for loc in self.get_onion_dispenser_locations():
                 state_mask_dict["onion_disp_loc"][loc] = 1
                 if goal_objects == "onion_dispenser":
@@ -2125,24 +2135,20 @@ class OvercookedGridworld(object):
                                 # onions_in_pot and tomatoes_in_pot are used when the soup is idling, and ingredients could still be added
                                 state_mask_dict["onions_in_pot"] += make_layer(obj.position, ingredients_dict["onion"])
                                 state_mask_dict["tomatoes_in_pot"] += make_layer(obj.position, ingredients_dict["tomato"])
-                                if goal_objects == "empty_pot":
-                                    state_mask_dict["goal"][pot_loc] = 1
                             else:
                                 state_mask_dict["onions_in_soup"] += make_layer(obj.position, ingredients_dict["onion"])
                                 state_mask_dict["tomatoes_in_soup"] += make_layer(obj.position, ingredients_dict["tomato"])
                                 state_mask_dict["soup_cook_time_remaining"] += make_layer(obj.position, obj.cook_time - obj._cooking_tick)
                                 if obj.is_ready:
                                     state_mask_dict["soup_done"] += make_layer(obj.position, 1)
-                                if goal_objects == "full_pot":
-                                    state_mask_dict["goal"][pot_loc] = 1
-                        elif goal_objects == "empty_pot":
-                            state_mask_dict["goal"][pot_loc] = 1
 
                     else:
                         # If player soup is not in a pot, treat it like a soup that is cooked with remaining time 0
                         state_mask_dict["onions_in_soup"] += make_layer(obj.position, ingredients_dict["onion"])
                         state_mask_dict["tomatoes_in_soup"] += make_layer(obj.position, ingredients_dict["tomato"])
                         state_mask_dict["soup_done"] += make_layer(obj.position, 1)
+                        if goal_objects == "soup":
+                            state_mask_dict["goal"][obj.position] = 1
 
                 elif obj.name == "dish":
                     state_mask_dict["dishes"] += make_layer(obj.position, 1)
