@@ -2129,6 +2129,7 @@ class OvercookedGridworld(object):
                     # get the ingredients into a {object: number} dictionary
                     ingredients_dict = Counter(obj.ingredients)
                     # assert "onion" in ingredients_dict.keys()
+                    # TODO remove for loop
                     for pot_loc in self.get_pot_locations():
                         if obj.position == pot_loc:
                             if obj.is_idle:

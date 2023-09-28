@@ -1,6 +1,6 @@
 {
-    "grid":  """XXXPX
-                O X1P
+    "grid":  """XXXXX
+                O P1P
                 O2X X
                 D X X
                 XXXSX""",
