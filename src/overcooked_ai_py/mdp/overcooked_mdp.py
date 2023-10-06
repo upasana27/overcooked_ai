@@ -347,6 +347,11 @@ class SoupState(ObjectState):
         supercls_hash = super(SoupState, self).__hash__()
         return hash((supercls_hash, self._cooking_tick, ingredient_hash))
 
+    def hash_no_tick(self):
+        ingredient_hash = hash(tuple([hash(i) for i in self._ingredients]))
+        supercls_hash = super(SoupState, self).__hash__()
+        return hash((supercls_hash, ingredient_hash))
+
     def __repr__(self):
         supercls_str = super(SoupState, self).__repr__()
         ingredients_str = self._ingredients.__repr__()
@@ -752,6 +757,17 @@ class OvercookedState(object):
         order_list_hash = hash(tuple(self.bonus_orders)) + hash(tuple(self.all_orders))
         return hash(
             (self.players, tuple(self.objects.values()), order_list_hash)
+        )
+
+    def specific_hash(self, p_idx):
+        order_list_hash = hash(tuple(self.bonus_orders)) + hash(tuple(self.all_orders))
+        object_hashes = tuple([o.hash_no_tick() if isinstance(o, SoupState) else hash(o) for o in self.objects.values()])
+        if p_idx == 0:
+            player_hash = hash((self.players[0], self.players[1]))
+        else:
+            player_hash = hash((self.players[1], self.players[0]))
+        return hash(
+            (player_hash, object_hashes, order_list_hash)
         )
 
     def __str__(self):
@@ -2042,7 +2058,8 @@ class OvercookedGridworld(object):
         return np.array(list(self.shape) + [26])
 
 
-    def lossless_state_encoding(self, overcooked_state, goal_objects=None, horizon=400, p_idx=None, debug=False):
+    def lossless_state_encoding(self, overcooked_state, goal_objects=None, horizon=400, p_idx=None, debug=False,
+                                new_agent=False):
         """Featurizes a OvercookedState object into a stack of boolean masks that are easily readable by a CNN"""
         assert self.num_players == 2, "Functionality has to be added to support encondings for > 2 players"
         assert type(debug) is bool
@@ -2130,8 +2147,8 @@ class OvercookedGridworld(object):
                     ingredients_dict = Counter(obj.ingredients)
                     # assert "onion" in ingredients_dict.keys()
                     # TODO remove for loop
-                    for pot_loc in self.get_pot_locations():
-                        if obj.position == pot_loc:
+                    if new_agent:
+                        if obj.position in self.get_pot_locations():
                             if obj.is_idle:
                                 # onions_in_pot and tomatoes_in_pot are used when the soup is idling, and ingredients could still be added
                                 state_mask_dict["onions_in_pot"] += make_layer(obj.position, ingredients_dict["onion"])
@@ -2142,14 +2159,34 @@ class OvercookedGridworld(object):
                                 state_mask_dict["soup_cook_time_remaining"] += make_layer(obj.position, obj.cook_time - obj._cooking_tick)
                                 if obj.is_ready:
                                     state_mask_dict["soup_done"] += make_layer(obj.position, 1)
-
+                        else:
+                            # If player soup is not in a pot, treat it like a soup that is cooked with remaining time 0
+                            state_mask_dict["onions_in_soup"] += make_layer(obj.position, ingredients_dict["onion"])
+                            state_mask_dict["tomatoes_in_soup"] += make_layer(obj.position, ingredients_dict["tomato"])
+                            state_mask_dict["soup_done"] += make_layer(obj.position, 1)
+                            if goal_objects == "soup":
+                                state_mask_dict["goal"][obj.position] = 1
                     else:
-                        # If player soup is not in a pot, treat it like a soup that is cooked with remaining time 0
-                        state_mask_dict["onions_in_soup"] += make_layer(obj.position, ingredients_dict["onion"])
-                        state_mask_dict["tomatoes_in_soup"] += make_layer(obj.position, ingredients_dict["tomato"])
-                        state_mask_dict["soup_done"] += make_layer(obj.position, 1)
-                        if goal_objects == "soup":
-                            state_mask_dict["goal"][obj.position] = 1
+                        for pot_loc in self.get_pot_locations():
+                            if obj.position == pot_loc:
+                                if obj.is_idle:
+                                    # onions_in_pot and tomatoes_in_pot are used when the soup is idling, and ingredients could still be added
+                                    state_mask_dict["onions_in_pot"] += make_layer(obj.position, ingredients_dict["onion"])
+                                    state_mask_dict["tomatoes_in_pot"] += make_layer(obj.position, ingredients_dict["tomato"])
+                                else:
+                                    state_mask_dict["onions_in_soup"] += make_layer(obj.position, ingredients_dict["onion"])
+                                    state_mask_dict["tomatoes_in_soup"] += make_layer(obj.position, ingredients_dict["tomato"])
+                                    state_mask_dict["soup_cook_time_remaining"] += make_layer(obj.position, obj.cook_time - obj._cooking_tick)
+                                    if obj.is_ready:
+                                        state_mask_dict["soup_done"] += make_layer(obj.position, 1)
+
+                        else:
+                            # If player soup is not in a pot, treat it like a soup that is cooked with remaining time 0
+                            state_mask_dict["onions_in_soup"] += make_layer(obj.position, ingredients_dict["onion"])
+                            state_mask_dict["tomatoes_in_soup"] += make_layer(obj.position, ingredients_dict["tomato"])
+                            state_mask_dict["soup_done"] += make_layer(obj.position, 1)
+                            if goal_objects == "soup":
+                                state_mask_dict["goal"][obj.position] = 1
 
                 elif obj.name == "dish":
                     state_mask_dict["dishes"] += make_layer(obj.position, 1)
