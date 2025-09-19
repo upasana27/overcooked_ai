@@ -1262,6 +1262,7 @@ class OvercookedGridworld(object):
         shaped reward is given only for completion of subgoals 
         (not soup deliveries).
         """
+        print("CAll this")
         events_infos = { event : [False] * self.num_players for event in EVENT_TYPES }
         assert not self.is_terminal(state), "Trying to find successor of a terminal state: {}".format(state)
         for action, action_set in zip(joint_action, self.get_actions(state)):
