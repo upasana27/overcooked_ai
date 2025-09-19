@@ -1272,13 +1272,13 @@ class OvercookedGridworld(object):
         new_state = state.deepcopy()
 
         # Resolve interacts first
-        sparse_reward_by_agent, shaped_reward_by_agent = self.resolve_interacts(new_state, joint_action, events_infos)
+        sparse_reward_by_agent, shapeid_reward_by_agent,shaped_info_by_agent = self.resolve_interacts(new_state, joint_action)
 
         assert new_state.player_positions == state.player_positions
         assert new_state.player_orientations == state.player_orientations
         
         # Resolve player movements
-        self.resolve_movement(new_state, joint_action)
+        self.resolve_movement(new_state, joint_action,shaped_info_by_agent)
 
         # Finally, environment effects
         self.step_environment_effects(new_state)
@@ -1286,7 +1286,7 @@ class OvercookedGridworld(object):
         # Additional dense reward logic
         # shaped_reward += self.calculate_distance_based_shaped_reward(state, new_state)
         infos = {
-            "event_infos": events_infos,
+            "shaped_info_by_agent": shaped_info_by_agent,
             "sparse_reward_by_agent": sparse_reward_by_agent,
             "shaped_reward_by_agent": shaped_reward_by_agent,
         }
@@ -1296,123 +1296,107 @@ class OvercookedGridworld(object):
             infos["phi_s_prime"] = self.potential_function(new_state, motion_planner)
         return new_state, infos
 
-    def resolve_interacts(self, new_state, joint_action, events_infos):
+   def resolve_interacts(self, new_state, joint_action):
         """
         Resolve any INTERACT actions, if present.
 
-        Currently if two players both interact with a terrain, we resolve player 1's interact 
+        Currently if two players both interact with a terrain, we resolve player 1's interact
         first and then player 2's, without doing anything like collision checking.
         """
         pot_states = self.get_pot_states(new_state)
-        # We divide reward by agent to keep track of who contributed
-        sparse_reward, shaped_reward = [0] * self.num_players, [0] * self.num_players 
+        ready_pots = pot_states["tomato"]["ready"] + pot_states["onion"]["ready"]
+        cooking_pots = ready_pots + pot_states["tomato"]["cooking"] + pot_states["onion"]["cooking"]
+        nearly_ready_pots = (
+            cooking_pots + pot_states["tomato"]["partially_full"] + pot_states["onion"]["partially_full"]
+        )
 
-        for player_idx, (player, action) in enumerate(zip(new_state.players, joint_action)):
-
+        sparse_reward, shaped_reward = [0] * self.num_players, [0] * self.num_players
+        # MARK: shaped_info by agent
+        shaped_info = [{k: 0 for k in SHAPED_INFOS} for _ in range(self.num_players)]
+        for player_idx, player, action in zip(range(self.num_players), new_state.players, joint_action):
             if action != Action.INTERACT:
+                if action in Direction.ALL_DIRECTIONS:
+                    shaped_info[player_idx]["MOVEMENT"] += 1
+                elif action == Action.STAY:
+                    shaped_info[player_idx]["STAY"] += 1
                 continue
 
             pos, o = player.position, player.orientation
             i_pos = Action.move_in_direction(pos, o)
             terrain_type = self.get_terrain_type_at_pos(i_pos)
 
-            # NOTE: we always log pickup/drop before performing it, as that's
-            # what the logic of determining whether the pickup/drop is useful assumes
-            if terrain_type == 'X':
-
+            if terrain_type == "X":
                 if player.has_object() and not new_state.has_object(i_pos):
-                    obj_name = player.get_object().name
-                    self.log_object_drop(events_infos, new_state, obj_name, pot_states, player_idx)
-
-                    # Drop object on counter
-                    obj = player.remove_object()
-                    new_state.add_object(obj, i_pos)
-                    
+                    shaped_info[player_idx][f"put_{player.get_object().name}_on_X"] += 1
+                    new_state.add_object(player.remove_object(), i_pos)
                 elif not player.has_object() and new_state.has_object(i_pos):
-                    obj_name = new_state.get_object(i_pos).name
-                    self.log_object_pickup(events_infos, new_state, obj_name, pot_states, player_idx)
+                    player.set_object(new_state.remove_object(i_pos))
+                    shaped_info[player_idx][f"pickup_{player.get_object().name}_from_X"] += 1
+                else:
+                    shaped_info[player_idx]["IDLE_INTERACT_X"] += 1
 
-                    # Pick up object from counter
-                    obj = new_state.remove_object(i_pos)
-                    player.set_object(obj)
-                    
+            elif terrain_type == "O" and player.held_object is None:
+                player.set_object(ObjectState("onion", pos))
+                shaped_info[player_idx][f"pickup_{player.get_object().name}_from_O"] += 1
+            elif terrain_type == "T" and player.held_object is None:
+                # MARK: pick tomato
+                player.set_object(ObjectState("tomato", pos))
+                shaped_info[player_idx][f"pickup_{player.get_object().name}_from_T"] += 1
+            elif terrain_type == "D" and player.held_object is None:
+                dishes_already = len(new_state.player_objects_by_type["dish"])
+                player.set_object(ObjectState("dish", pos))
 
-            elif terrain_type == 'O' and player.held_object is None:
-                self.log_object_pickup(events_infos, new_state, "onion", pot_states, player_idx)
-
-                # Onion pickup from dispenser
-                obj = ObjectState('onion', pos)
-                player.set_object(obj)
-
-            elif terrain_type == 'T' and player.held_object is None:
-                # Tomato pickup from dispenser
-                player.set_object(ObjectState('tomato', pos))
-
-            elif terrain_type == 'D' and player.held_object is None:
-                self.log_object_pickup(events_infos, new_state, "dish", pot_states, player_idx)
-
-                # Give shaped reward if pickup is useful
-                if self.is_dish_pickup_useful(new_state, pot_states):
+                dishes_on_counters = self.get_counter_objects_dict(new_state)["dish"]
+                if len(nearly_ready_pots) > dishes_already and len(dishes_on_counters) == 0:
                     shaped_reward[player_idx] += self.reward_shaping_params["DISH_PICKUP_REWARD"]
+                    shaped_info[player_idx]["USEFUL_DISH_PICKUP"] += 1
+                shaped_info[player_idx][f"pickup_{player.get_object().name}_from_D"] += 1
 
-                # Perform dish pickup from dispenser
-                obj = ObjectState('dish', pos)
-                player.set_object(obj)
+            elif terrain_type == "P" and player.has_object():
+                if player.get_object().name == "dish" and new_state.has_object(i_pos):
+                    obj = new_state.get_object(i_pos)
+                    assert obj.name == "soup", "Object in pot was not soup"
+                    _, num_items, cook_time = obj.state
+                    if num_items == self.num_items_for_soup and cook_time >= self.soup_cooking_time:
+                        player.remove_object()  # Turn the dish into the soup
+                        player.set_object(new_state.remove_object(i_pos))
+                        shaped_reward[player_idx] += self.reward_shaping_params["SOUP_PICKUP_REWARD"]
+                        shaped_info[player_idx]["SOUP_PICKUP"] += 1
 
-            elif terrain_type == 'P' and not player.has_object():
-                pass
-                # Cooking soup
-                # if self.soup_to_be_cooked_at_location(new_state, i_pos):
-                #     soup = new_state.get_object(i_pos)
-                #     soup.begin_cooking()
-            
-            elif terrain_type == 'P' and player.has_object():
-
-                if player.get_object().name == 'dish' and self.soup_ready_at_location(new_state, i_pos):
-                    self.log_object_pickup(events_infos, new_state, "soup", pot_states, player_idx)
-
-                    # Pick up soup
-                    player.remove_object() # Remove the dish
-                    obj = new_state.remove_object(i_pos) # Get soup
-                    player.set_object(obj)
-                    shaped_reward[player_idx] += self.reward_shaping_params["SOUP_PICKUP_REWARD"]
-
-                elif player.get_object().name in Recipe.ALL_INGREDIENTS:
-                    # Adding ingredient to soup
+                elif player.get_object().name in ["onion", "tomato"]:
+                    item_type = player.get_object().name
 
                     if not new_state.has_object(i_pos):
-                        # Pot was empty, add soup to it
-                        new_state.add_object(SoupState(i_pos, ingredients=[]))
-
-                    # Add ingredient if possible
-                    soup = new_state.get_object(i_pos)
-                    if not soup.is_full:
-                        old_soup = soup.deepcopy()
-                        obj = player.remove_object()
-                        soup.add_ingredient(obj)
+                        # Pot was empty
+                        player.remove_object()
+                        new_state.add_object(ObjectState("soup", i_pos, (item_type, 1, 0)), i_pos)
                         shaped_reward[player_idx] += self.reward_shaping_params["PLACEMENT_IN_POT_REW"]
+                        shaped_info[player_idx]["PLACEMENT_IN_POT"] += 1
 
-                        # Log potting
-                        self.log_object_potting(events_infos, new_state, old_soup, soup, obj.name, player_idx)
-                        if obj.name == Recipe.ONION:
-                            events_infos['potting_onion'][player_idx] = True
-
-                    ### ADDED BY STEPHAO ###
-                    if soup.is_full and soup.is_idle:
-                        soup.begin_cooking()
-                    ########################
-
-            elif terrain_type == 'S' and player.has_object():
+                    else:
+                        # Pot has already items in it
+                        obj = new_state.get_object(i_pos)
+                        assert obj.name == "soup", "Object in pot was not soup"
+                        soup_type, num_items, cook_time = obj.state
+                        if num_items < self.num_items_for_soup and soup_type == item_type:
+                            player.remove_object()
+                            obj.state = (soup_type, num_items + 1, 0)
+                            shaped_reward[player_idx] += self.reward_shaping_params["PLACEMENT_IN_POT_REW"]
+                            shaped_info[player_idx]["PLACEMENT_IN_POT"] += 1
+            elif terrain_type == "S" and player.has_object():
                 obj = player.get_object()
-                if obj.name == 'soup':
-
-                    delivery_rew = self.deliver_soup(new_state, player, obj)
+                if obj.name == "soup":
+                    new_state, delivery_rew = self.deliver_soup(new_state, player, obj)
                     sparse_reward[player_idx] += delivery_rew
+                    shaped_info[player_idx]["delivery"] += 1
 
-                    # Log soup delivery
-                    events_infos['soup_delivery'][player_idx] = True                        
+                    # If last soup necessary was delivered, stop resolving interacts
+                    if new_state.order_list is not None and len(new_state.order_list) == 0:
+                        break
+            else:
+                shaped_info[player_idx]["IDLE_INTERACT_EMPTY"] += 1
 
-        return sparse_reward, shaped_reward
+        return sparse_reward, shaped_reward, shaped_info
 
     def get_recipe_value(self, state, recipe, discounted=False, base_recipe=None, potential_params={}):
         """
@@ -1452,12 +1436,22 @@ class OvercookedGridworld(object):
         player.remove_object()
 
         return self.get_recipe_value(state, soup.recipe)
-
-    def resolve_movement(self, state, joint_action):
+    def resolve_movement(self, state, joint_action, shaped_info_by_agent=None):
         """Resolve player movement and deal with possible collisions"""
+        old_positions, old_orientations = [p.position for p in state.players], [p.orientation for p in state.players]
         new_positions, new_orientations = self.compute_new_positions_and_orientations(state.players, joint_action)
+        if shaped_info_by_agent is not None:
+            for player_idx, (old_pos, new_pos, old_o, new_o) in enumerate(
+                zip(old_positions, new_positions, old_orientations, new_orientations)
+            ):
+                if joint_action[player_idx] in Direction.ALL_DIRECTIONS and old_pos == new_pos and old_o == new_o:
+                    shaped_info_by_agent[player_idx]["IDLE_MOVEMENT"] += 1
         for player_state, new_pos, new_o in zip(state.players, new_positions, new_orientations):
             player_state.update_pos_and_or(new_pos, new_o)
+       
+      
+
+           
 
     def compute_new_positions_and_orientations(self, old_player_states, joint_action):
         """Compute new positions and orientations ignoring collisions"""
