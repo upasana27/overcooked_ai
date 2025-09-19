@@ -276,6 +276,7 @@ class OvercookedEnv(object):
         # custom user defined information
         env_info = {"agent_infos": [joint_agent_action_info[agent_idx] for agent_idx in range(self.mdp.num_players)]}
         # TODO: This can be further simplified by having all the mdp_infos copied over to the env_infos automatically 
+        env_info["shaped_info"] = mdp["shaped_info_by_agent"]
         env_info["sparse_r_by_agent"] = mdp_infos["event_infos"]
         env_info["shaped_r_by_agent"] = mdp_infos["shaped_reward_by_agent"]
         env_info["phi_s"] = mdp_infos["phi_s"] if "phi_s" in mdp_infos else None
